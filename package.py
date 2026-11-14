@@ -4,14 +4,13 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 VERSION = '2.9'
-files = ['README.md','OrochiZPadX.ini','OrochiZPadX-legacy.ini',
-         'OrochiZPadX-platform.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini',
+files = ['README.md','OrochiZPadX.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini',
          'SSM7_Tweaks.ini','CONFIGURATION.md','MULTI_GAME.md',
          'install-targets.ps1','restore.ps1',
          'build.cmd','build-platform.cmd','package.py','.gitignore',
          'build/dinput8.dll','build/dinput8-platform.dll',
          'src/padfix.cpp','src/platform.inc','src/dinput8.def','src/dinput8-platform.def']
-output = ROOT / f'OrochiZPadX-{VERSION}-x86.zip'
+output = ROOT / f'MUSOUTweaksPC-{VERSION}-x86.zip'
 for name in files:
     if not (ROOT/name).is_file():
         raise FileNotFoundError(name)
