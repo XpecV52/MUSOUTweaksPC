@@ -1,7 +1,6 @@
 param(
     [string]$Shin3 = 'E:\Games\Non-Steam\Shin Sangokumusou 3\game',
     [string]$Shin4 = 'E:\Games\Non-Steam\Shin Sangokumusou 4',
-    [string]$Sengoku2 = 'E:\Games\Non-Steam\Sengoku Musou 2',
     [string]$Dynasty8 = 'F:\SteamLibrary\steamapps\common\Dynasty Warriors 8'
 )
 $ErrorActionPreference = 'Stop'
@@ -14,7 +13,6 @@ $targets = @(
     @{ dir = $Shin4; dll = 'build\dinput8.dll'; ini = 'SSM4_Tweaks.ini' },
     @{ dir = $Dynasty8; dll = 'build\dinput8-platform.dll'; ini = 'SSM7_Tweaks.ini' }
 )
-Write-Warning "Skipped Sengoku Musou 2 ($Sengoku2): it still crashes with no patch DLL on this Windows 11 system, and a local dinput8.dll proxy adds a separate conflict. No compatibility-mode fix was confirmed; see SW2_DIAGNOSIS.md."
 foreach ($item in $targets) {
     $target = (Resolve-Path -LiteralPath $item.dir).Path
     $backup = Join-Path $target ('OrochiZPadX-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))

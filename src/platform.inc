@@ -19,7 +19,6 @@ static RECT monitorBounds;
 static int earlyHookCount;
 static bool graphicsPatched=false;
 static bool forceNativeBuffer=false;
-static bool deferGetProcHook=false;
 static char gameExeName[MAX_PATH];
 static decltype(&CreateWindowExA) realCreateWindow;
 static decltype(&CreateWindowExW) realCreateWindowW;
@@ -458,7 +457,6 @@ static bool chooseMainWindowA(LPCSTR cls,LPCSTR title,HWND parent) {
   if(!strcmp(cls,"Orochi_Z_PC"))return true;
   if(!_stricmp(gameExeName,"ShinSangokumusou3.exe")&&!strcmp(cls,"KOEI-Dynasty Warriors 4 Window Class"))return true;
   if((!_stricmp(gameExeName,"SM4_WIN.exe")||!_stricmp(gameExeName,"SS4.exe")||!_stricmp(gameExeName,"SS4_Plus.exe")||!_stricmp(gameExeName,"SS4_Super.exe")||!_stricmp(gameExeName,"SS4_Ultima.exe"))&&!strcmp(cls,"SM4PC"))return true;
-  if(!_stricmp(gameExeName,"SW2.exe")&&!strcmp(cls,"SW2WIN"))return true;
  }
  return title&&(ULONG_PTR)title>65535&&*title;
 }
@@ -606,14 +604,7 @@ static bool patchImport(const char* dllName,const char* functionName,void* hook,
  }
  return false;
 }
-static void installDeferredGetProcHook() {
- if(deferGetProcHook&&patchImport("kernel32.dll","GetProcAddress",(void*)platformGetProcAddress,(void**)&realGetProcAddress)){
-  deferGetProcHook=false;logf("deferred GetProcAddress hook installed after DirectInput startup");
- }
-}
 [[maybe_unused]] static void installEarlyHooks() {
- char exe[MAX_PATH]={};GetModuleFileNameA(nullptr,exe,MAX_PATH);const char* name=strrchr(exe,'\\');name=name?name+1:exe;
- deferGetProcHook=!_stricmp(name,"SW2.exe");
  struct Entry{const char* dll;const char* name;void* hook;void** original;};
  Entry hooks[]={
   {"user32.dll","CreateWindowExA",(void*)platformCreateWindow,(void**)&realCreateWindow},
@@ -628,5 +619,5 @@ static void installDeferredGetProcHook() {
   {"ole32.dll","CoInitialize",(void*)platformCoInitializeLegacy,(void**)&realCoInitializeLegacy},
   {"d3d9.dll","Direct3DCreate9",(void*)platformCreateD3D,(void**)&realCreateD3D},
   {"kernel32.dll","GetProcAddress",(void*)platformGetProcAddress,(void**)&realGetProcAddress}};
- for(auto& hook:hooks){if(deferGetProcHook&&!strcmp(hook.name,"GetProcAddress"))continue;if(patchImport(hook.dll,hook.name,hook.hook,hook.original))earlyHookCount++;}
+ for(auto& hook:hooks)if(patchImport(hook.dll,hook.name,hook.hook,hook.original))earlyHookCount++;
 }

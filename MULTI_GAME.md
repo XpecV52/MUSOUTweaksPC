@@ -9,6 +9,4 @@
 
 `OROCHI_Z_TC.exe` (无双蛇魔Z) continues to use `OrochiZPadX.ini`.
 
-`Sengoku Musou 2` is deliberately excluded. This local `SW2.exe` contains SafeDisc/`SECDRV.SYS` markers, while the Windows 11 system has no `secdrv.sys` driver or service. Without any patch DLL it crashes with `0xc0000005` at offset `0x001807fe`; Windows 7/Vista/XP compatibility modes did not fix it. A local `dinput8.dll` proxy adds a separate conflict. Microsoft warns that restoring the vulnerable SafeDisc driver lowers system security. See `SW2_DIAGNOSIS.md`.
-
 Run `build.cmd` and `build-platform.cmd` from a Visual Studio x86 developer environment to rebuild both variants. `install-targets.ps1` installs only the compatible targets and creates timestamped backups with `manifest.json`.

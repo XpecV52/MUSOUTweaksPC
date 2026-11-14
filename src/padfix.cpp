@@ -435,7 +435,6 @@ static HRESULT WINAPI platformDICreateDevice(void* input,REFGUID guid,void** out
 extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE h,DWORD v,REFIID id,void** p,LPUNKNOWN u) {
  static std::once_flag once;static HRESULT (WINAPI* create)(HINSTANCE,DWORD,REFIID,void**,LPUNKNOWN);
  std::call_once(once,[]{initializeAll();HMODULE d=systemDll("dinput8.dll");if(d)create=(decltype(create))GetProcAddress(d,"DirectInput8Create");});
- installDeferredGetProcHook();
  if(!create)return E_FAIL;if(!p)return E_POINTER;*p=nullptr;
 #ifdef PADFIX_PLATFORM_ONLY
  HRESULT hr=create(h,v,id,p,u);
@@ -446,6 +445,4 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE h,DWORD v,REFIID id,void*
  IDirectInput8A* r=nullptr;HRESULT hr=create(h,v,id,(void**)&r,u);if(SUCCEEDED(hr)&&r){*p=new Input(r);logf("DirectInput8Create ANSI wrapped");}return hr;
 #endif
 }
-#ifndef PADFIX_TEST
 BOOL WINAPI DllMain(HINSTANCE h,DWORD reason,LPVOID) {if(reason==DLL_PROCESS_ATTACH){selfModule=h;installEarlyHooks();}return TRUE;}
-#endif

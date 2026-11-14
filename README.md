@@ -4,11 +4,9 @@
 
 32 位 DLL 补丁，为真三国无双3、真三国无双4 提供 XInput/原生 DS4 手柄适配、十字键和摇杆修复、热插拔及无边框窗口；为《Dynasty Warriors 8》（真三国无双7）启用无边框窗口，并把 1080p 游戏画面锐利铺满高分辨率桌面。
 
-《战国无双2》暂不安装本补丁：本机 `SW2.exe` 含 SafeDisc/`SECDRV.SYS` 标记，但 Windows 11 没有此驱动；游戏无补丁时仍崩溃，Windows 7 兼容模式也未修复。微软警告启用该旧驱动会降低安全性，因此不建议在 Win11 强行加载。详见 `SW2_DIAGNOSIS.md`。
-
 ## 安装
 
-退出游戏后，在项目目录运行 `install-targets.ps1`。脚本安装真三3、真三4 和 DW8 的 DLL/INI，并为原文件生成带 manifest 的时间戳备份。战国无双2 不安装代理 DLL。
+退出游戏后，在项目目录运行 `install-targets.ps1`。脚本安装真三3、真三4 和 DW8 的 DLL/INI，并为原文件生成带 manifest 的时间戳备份。
 
 使用 Visual Studio x86 C++ 环境运行 `build.cmd` 与 `build-platform.cmd`。主产物为 `build\dinput8.dll`，DW8 使用 `build\dinput8-platform.dll`。卸载时按备份 manifest 运行 `restore.ps1`。完整配置说明见 `CONFIGURATION.md`。
 
