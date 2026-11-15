@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$BackupDir)
 $ErrorActionPreference = 'Stop'
-$patchedGames = @('OROCHI_Z_TC','ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch')
+$patchedGames = @('OROCHI_Z_TC','ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch','SW2')
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in $patchedGames }
 if ($running) { throw "Exit patched games before restoring: $($running.ProcessName -join ', ')" }
 $backup = (Resolve-Path -LiteralPath $BackupDir).Path
@@ -9,7 +9,7 @@ $manifestPath = Join-Path $backup 'manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw 'Backup directory must contain manifest.json.' }
 $entries = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 foreach ($entry in $entries) {
-    if ($entry.name -notin @('dinput8.dll','OrochiZPadX.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini','SSM7_Tweaks.ini','OrochiZPadX.log','OrochiZPadX-diagnose.exe')) { throw 'Unrecognized manifest file.' }
+    if ($entry.name -notin @('dinput8.dll','OrochiZPadX.ini','SM2_Tweaks.ini','SSM2_Tweaks.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini','SSM7_Tweaks.ini','OrochiZPadX.log','MUSOUTweaksPC.log','OrochiZPadX-diagnose.exe')) { throw 'Unrecognized manifest file.' }
     if ($entry.existed -and -not (Test-Path -LiteralPath (Join-Path $backup $entry.name))) { throw "Missing backup: $($entry.name)" }
 }
 foreach ($entry in $entries) {

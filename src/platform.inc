@@ -8,7 +8,9 @@
 #include <cwchar>
 #include <cctype>
 static void initializeAll();
+static void attachExistingMainWindow();
 static int sharedInput=1,windowMode=1,imeIsolation=1,comCompatibility=1,quickClose=1;
+static int fpsLimit=0;
 static int renderWidth=0,renderHeight=0;
 static bool nativeResolution=false,scaleToFill=false;
 // 0=point, 1=linear, 2=Catmull-Rom cubic reconstruction.
@@ -17,8 +19,11 @@ static HWND gameWindow;
 static WNDPROC gameWindowProc;
 static RECT monitorBounds;
 static int earlyHookCount;
+static unsigned earlyHookMask;
 static bool graphicsPatched=false;
 static bool forceNativeBuffer=false;
+static bool deferGetProcHook=false;
+static bool lateD3DHookAttempted=false;
 static char gameExeName[MAX_PATH];
 static decltype(&CreateWindowExA) realCreateWindow;
 static decltype(&CreateWindowExW) realCreateWindowW;
@@ -107,7 +112,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0 {
  return saturate(c);
 })";
  ID3DBlob* code=nullptr;ID3DBlob* errors=nullptr;
- HRESULT hr=compile(shaderSource,sizeof(shaderSource)-1,"OrochiZPadX cubic scale",nullptr,nullptr,"main","ps_3_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);
+ HRESULT hr=compile(shaderSource,sizeof(shaderSource)-1,"MUSOUTweaksPC cubic scale",nullptr,nullptr,"main","ps_3_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);
  if(errors){if(FAILED(hr))logf("D3D cubic shader compile failed: %.*s",(int)errors->GetBufferSize(),(const char*)errors->GetBufferPointer());errors->Release();}
  IDirect3DPixelShader9* shader=nullptr;
  if(SUCCEEDED(hr)&&code)hr=device->CreatePixelShader((const DWORD*)code->GetBufferPointer(),&shader);
@@ -251,15 +256,56 @@ static void scaleBackbufferToNative(IDirect3DDevice9* d,const RECT* source,const
  if(logAttempt||logFailure)logf("D3D scale frame source=%ux%u destination=%ux%u filter=%u copy_hr=%08lx scale_hr=%08lx",logicalW,logicalH,desc.Width,desc.Height,scaleFilter,copyHr,scaleHr);
  temp->Release();back->Release();
 }
+static void pacePresentation() {
+ if(fpsLimit<=0)return;
+ static std::mutex paceMutex;
+ static LARGE_INTEGER frequency={};
+ static LONGLONG nextTick=0,remainder=0;
+ static LONGLONG measureStart=0;
+ static unsigned measureFrames=0;
+ static HANDLE timer=nullptr;
+ std::lock_guard<std::mutex> lock(paceMutex);
+ if(!frequency.QuadPart&&!QueryPerformanceFrequency(&frequency))return;
+ if(!timer){
+  using CreateTimerFn=HANDLE(WINAPI*)(LPSECURITY_ATTRIBUTES,LPCWSTR,DWORD,DWORD);
+  auto create=(CreateTimerFn)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"CreateWaitableTimerExW");
+  // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (Windows 10 1803+), with an
+  // auto-reset timer fallback for earlier systems.
+  if(create)timer=create(nullptr,nullptr,0x2,TIMER_ALL_ACCESS);
+  if(!timer)timer=CreateWaitableTimerW(nullptr,FALSE,nullptr);
+ }
+ LARGE_INTEGER now={};QueryPerformanceCounter(&now);
+ const LONGLONG period=frequency.QuadPart/fpsLimit;
+ if(!nextTick||now.QuadPart-nextTick>period*2){nextTick=now.QuadPart;remainder=0;}
+ while(now.QuadPart<nextTick){
+  LONGLONG remaining=nextTick-now.QuadPart;
+  if(timer&&remaining>frequency.QuadPart/1000){
+   LARGE_INTEGER due={};due.QuadPart=-((remaining*10000000LL)/frequency.QuadPart);
+   if(due.QuadPart==0)due.QuadPart=-1;
+   if(SetWaitableTimer(timer,&due,0,nullptr,nullptr,FALSE))WaitForSingleObject(timer,INFINITE);
+   else SwitchToThread();
+  }else SwitchToThread();
+  QueryPerformanceCounter(&now);
+ }
+ if(!measureStart)measureStart=now.QuadPart;
+ if(++measureFrames>=300&&now.QuadPart>measureStart){
+  double actual=(double)measureFrames*(double)frequency.QuadPart/(double)(now.QuadPart-measureStart);
+  logf("D3D9 present pace target=%d actual=%.2f",fpsLimit,actual);
+  measureFrames=0;measureStart=now.QuadPart;
+ }
+ nextTick+=period;remainder+=frequency.QuadPart%fpsLimit;
+ if(remainder>=fpsLimit){nextTick++;remainder-=fpsLimit;}
+}
 static ULONG WINAPI platformRelease(void* object) {
  auto fn=(ULONG(WINAPI*)(void*))originalMethod(object,2);if(!fn)return 0;
  ULONG refs=fn(object);
  if(!refs){releaseScaleSurface(object);releaseNativeOutputChain(object);std::lock_guard<std::mutex> lock(tableMutex);renderDevices.erase(object);logicalRenderSizes.erase(object);nativeOutputDevices.erase(object);loggedNativeViewports.erase(object);loggedNativeScissors.erase(object);}
  return refs;
 }
-static void hookMethod(void* object,size_t index,void* hook) {
+static void hookTable(void** table,size_t index,void* hook) {
+ if(!table)return;
  // Patch only the requested private vtable slots; never truncate/copy them.
- std::lock_guard<std::mutex> lock(tableMutex);void** table=*(void***)object;auto& entry=tables[table];
+ std::lock_guard<std::mutex> lock(tableMutex);auto& entry=tables[table];
  if(!entry.release)entry.release=table[2];
  if(!entry.methods.count(index))entry.methods[index]=table[index];
  DWORD old=0;
@@ -270,19 +316,30 @@ static void hookMethod(void* object,size_t index,void* hook) {
   InterlockedExchangePointer(table+index,hook);DWORD discard;VirtualProtect(table+index,sizeof(void*),old,&discard);
  }
 }
+static void hookMethod(void* object,size_t index,void* hook) {
+ if(object)hookTable(*(void***)object,index,hook);
+}
 static void forcePresentation(D3DPRESENT_PARAMETERS& p) {
- if(!windowMode)return;
+ if(!windowMode){if(fpsLimit>0)p.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;return;}
  p.Windowed=TRUE;p.FullScreen_RefreshRateInHz=0;
  // Older Koei games keep their UI viewport at the selected game resolution.
  // Keep that buffer unless the profile explicitly asks for native rendering.
  if(nativeResolution&&!needsNativeOutputChain(p))getNativeDisplaySize(p.BackBufferWidth,p.BackBufferHeight);
  else if(forceNativeBuffer&&!needsNativeOutputChain(p)){p.BackBufferWidth=renderWidth;p.BackBufferHeight=renderHeight;}
- if(p.PresentationInterval!=D3DPRESENT_INTERVAL_IMMEDIATE)p.PresentationInterval=D3DPRESENT_INTERVAL_ONE;
+ // An explicit game frame limit owns the cadence; do not add a second wait
+ // tied to the desktop refresh rate. Windowed mode leaves the monitor mode intact.
+ if(fpsLimit>0)p.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;
+ else if(p.PresentationInterval!=D3DPRESENT_INTERVAL_IMMEDIATE)p.PresentationInterval=D3DPRESENT_INTERVAL_ONE;
 }
 static HRESULT WINAPI platformReset(IDirect3DDevice9* d,D3DPRESENT_PARAMETERS* p) {
  if(!p)return D3DERR_INVALIDCALL;
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRESENT_PARAMETERS*))originalMethod(d,16);
  bool ours=false,output=false;{std::lock_guard<std::mutex> lock(tableMutex);ours=renderDevices.count(d)!=0;output=nativeOutputDevices.count(d)!=0;}
+ if(!ours&&gameWindow&&(windowMode||fpsLimit>0)){
+  D3DDEVICE_CREATION_PARAMETERS cp={};
+  auto get=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DDEVICE_CREATION_PARAMETERS*))(*(void***)d)[9];
+  if(get&&SUCCEEDED(get(d,&cp))&&cp.hFocusWindow==gameWindow){ours=true;std::lock_guard<std::mutex> lock(tableMutex);renderDevices.insert(d);}
+ }
  UINT requestedW=p->BackBufferWidth,requestedH=p->BackBufferHeight;BOOL requestedWindowed=p->Windowed;
  if(ours){releaseScaleSurface(d);releaseNativeOutputChain(d);if(output){p->Windowed=TRUE;p->FullScreen_RefreshRateInHz=0;if(p->PresentationInterval!=D3DPRESENT_INTERVAL_IMMEDIATE)p->PresentationInterval=D3DPRESENT_INTERVAL_ONE;}else forcePresentation(*p);}HRESULT hr=fn?fn(d,p):D3DERR_INVALIDCALL;
  if(ours&&nativeResolution&&SUCCEEDED(hr)&&requestedW&&requestedH){std::lock_guard<std::mutex> lock(tableMutex);logicalRenderSizes[d]={requestedW,requestedH};}
@@ -327,6 +384,9 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
   if(from)from->Release();if(to)to->Release();
  }else scaleBackbufferToNative(d,source,destination);
  HRESULT hr=fn?fn(d,source,destination,overrideWindow,dirty):D3DERR_INVALIDCALL;
+ // Pace after displaying this frame so the next game-loop iteration can
+ // sample input and render before its next Present deadline.
+ if(fpsLimit>0)pacePresentation();
  if(chain){
   if(SUCCEEDED(copyHr)&&SUCCEEDED(hr)){
    HRESULT outHr=chain->Present(nullptr,nullptr,gameWindow,nullptr,0);
@@ -342,6 +402,8 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
 }
 static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE type,HWND focus,DWORD flags,D3DPRESENT_PARAMETERS* p,IDirect3DDevice9** out) {
  if(!p||!out)return D3DERR_INVALIDCALL;
+ attachExistingMainWindow();
+ logf("D3D9 CreateDevice hook entered focus=%p present_hwnd=%p game_hwnd=%p fps_limit=%d",focus,p->hDeviceWindow,gameWindow,fpsLimit);
  auto fn=(HRESULT(WINAPI*)(IDirect3D9*,UINT,D3DDEVTYPE,HWND,DWORD,D3DPRESENT_PARAMETERS*,IDirect3DDevice9**))originalMethod(d,16);
  bool ours=gameWindow&&(focus==gameWindow||p->hDeviceWindow==gameWindow);
  bool nativeOutput=needsNativeOutputChain(*p);
@@ -349,7 +411,7 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  if(ours)forcePresentation(*p);HRESULT hr=fn?fn(d,adapter,type,focus,flags,p,out):D3DERR_INVALIDCALL;
  logf("D3D CreateDevice device=%p focus=%p present_hwnd=%p game_hwnd=%p ours=%d flags=%08lx request=%ux%u/%d actual=%ux%u/%d hr=%08lx",SUCCEEDED(hr)&&out?*out:nullptr,focus,p->hDeviceWindow,gameWindow,ours,flags,requestedW,requestedH,requestedWindowed,p->BackBufferWidth,p->BackBufferHeight,p->Windowed,hr);
  if(SUCCEEDED(hr)&&*out){
-  if(ours&&nativeResolution)hookMethod(*out,17,(void*)platformPresent);
+  if(ours&&(nativeResolution||fpsLimit>0)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d",fpsLimit);}
   if(ours){
    UINT logicalW=requestedW,logicalH=requestedH;if(nativeResolution&&(!logicalW||!logicalH))getNativeDisplaySize(logicalW,logicalH);
    {std::lock_guard<std::mutex> lock(tableMutex);renderDevices.insert(*out);if(nativeResolution)logicalRenderSizes[*out]={logicalW,logicalH};if(nativeOutput)nativeOutputDevices.insert(*out);}
@@ -362,8 +424,81 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  return hr;
 }
 static IDirect3D9* WINAPI platformCreateD3D(UINT sdk) {
- initializeAll();IDirect3D9* d=realCreateD3D?realCreateD3D(sdk):nullptr;
- if(d&&windowMode)hookMethod(d,16,(void*)platformCreateDevice);return d;
+ initializeAll();logf("Direct3DCreate9 hook entered fps_limit=%d borderless=%d",fpsLimit,windowMode);
+ IDirect3D9* d=realCreateD3D?realCreateD3D(sdk):nullptr;
+ if(d&&(windowMode||fpsLimit>0))hookMethod(d,16,(void*)platformCreateDevice);return d;
+}
+static bool d3d9DeviceTable(void** table,uintptr_t moduleBase,uintptr_t moduleEnd,void* present,void* reset) {
+ if(!table||table[16]!=reset||table[17]!=present)return false;
+ unsigned inImage=0;
+ for(size_t i=0;i<119;i++){uintptr_t fn=(uintptr_t)table[i];if(fn>=moduleBase&&fn<moduleEnd)inImage++;}
+ return inImage>=100;
+}
+static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTable) {
+ HMODULE module=GetModuleHandleA("d3d9.dll");if(!module)return 0;
+ BYTE* base=(BYTE*)module;auto dos=(IMAGE_DOS_HEADER*)base;if(dos->e_magic!=IMAGE_DOS_SIGNATURE)return 0;
+ auto nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);uintptr_t moduleBase=(uintptr_t)base,moduleEnd=moduleBase+nt->OptionalHeader.SizeOfImage;
+ SYSTEM_INFO info={};GetSystemInfo(&info);uintptr_t address=(uintptr_t)info.lpMinimumApplicationAddress,maximum=(uintptr_t)info.lpMaximumApplicationAddress;
+ unsigned hooked=0;void* firstTable=nullptr;
+ while(address<maximum){
+  MEMORY_BASIC_INFORMATION region={};SIZE_T queried=VirtualQuery((void*)address,&region,sizeof(region));if(!queried)break;
+  uintptr_t start=(uintptr_t)region.BaseAddress,end=start+region.RegionSize;
+  DWORD protection=region.Protect&0xff;
+  bool readable=protection==PAGE_READONLY||protection==PAGE_READWRITE||protection==PAGE_WRITECOPY||protection==PAGE_EXECUTE_READ||protection==PAGE_EXECUTE_READWRITE||protection==PAGE_EXECUTE_WRITECOPY;
+  if(region.State==MEM_COMMIT&&region.Type==MEM_PRIVATE&&readable&&!(region.Protect&PAGE_GUARD)){
+   uintptr_t word=(start+sizeof(void*)-1)&~(uintptr_t)(sizeof(void*)-1);
+   for(;word+sizeof(void*)<=end;word+=sizeof(void*)){
+    if(*(void**)word!=present||word<start+17*sizeof(void*))continue;
+    void** table=(void**)(word-17*sizeof(void*));
+    if((uintptr_t)table+119*sizeof(void*)>end)continue;
+    if(table==probeTable||!d3d9DeviceTable(table,moduleBase,moduleEnd,present,reset))continue;
+    hookTable(table,17,(void*)platformPresent);hookTable(table,16,(void*)platformReset);
+    if(!firstTable)firstTable=table;hooked++;
+   }
+  }
+  if(end<=address)break;address=end;
+ }
+ if(hooked)logf("late D3D9 game vtables hooked=%u first=%p fps_limit=%d",hooked,firstTable,fpsLimit);
+ return hooked;
+}
+// DirectInput8 may initialize after the game has created its D3D9 device.
+// A probe supplies this runtime's Present/Reset addresses; scan private heap
+// vtables for the matching device table, then hook the game's existing one.
+static DWORD WINAPI lateD3DPresentWatch(void*) {
+ SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
+ HMODULE module=GetModuleHandleA("d3d9.dll");if(!module)module=LoadLibraryA("d3d9.dll");
+ auto create=module?(IDirect3D9*(WINAPI*)(UINT))GetProcAddress(module,"Direct3DCreate9"):nullptr;
+ if(!create){logf("late D3D9 hook failed: Direct3DCreate9 unavailable");return 0;}
+ IDirect3D9* api=create(D3D_SDK_VERSION);
+ if(!api){logf("late D3D9 hook failed: Direct3DCreate9 returned null");return 0;}
+ HWND probe=CreateWindowExA(0,"STATIC","MUSOUTweaksPC D3D probe",WS_POPUP,0,0,16,16,nullptr,nullptr,GetModuleHandleA(nullptr),nullptr);
+ if(!probe){api->Release();logf("late D3D9 hook failed: probe window unavailable");return 0;}
+ D3DPRESENT_PARAMETERS p={};p.BackBufferWidth=16;p.BackBufferHeight=16;p.BackBufferFormat=D3DFMT_UNKNOWN;
+ p.BackBufferCount=1;p.SwapEffect=D3DSWAPEFFECT_DISCARD;p.hDeviceWindow=probe;p.Windowed=TRUE;p.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;
+ IDirect3DDevice9* device=nullptr;HRESULT hr=api->CreateDevice(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,probe,D3DCREATE_SOFTWARE_VERTEXPROCESSING,&p,&device);
+ if(FAILED(hr)||!device){
+  p={};p.BackBufferWidth=16;p.BackBufferHeight=16;p.BackBufferFormat=D3DFMT_UNKNOWN;p.BackBufferCount=1;
+  p.SwapEffect=D3DSWAPEFFECT_DISCARD;p.hDeviceWindow=probe;p.Windowed=TRUE;p.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;
+  hr=api->CreateDevice(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,probe,D3DCREATE_HARDWARE_VERTEXPROCESSING,&p,&device);
+ }
+ if(FAILED(hr)||!device){DestroyWindow(probe);api->Release();logf("late D3D9 hook failed: probe CreateDevice hr=%08lx",hr);return 0;}
+ void** probeTable=*(void***)device;void* present=probeTable[17];void* reset=probeTable[16];
+ logf("late D3D9 watcher started present=%p reset=%p",present,reset);
+ for(unsigned attempt=1;attempt<=120;attempt++){
+  unsigned hooked=hookExistingD3D9Tables(present,reset,probeTable);
+  if(hooked){logf("late D3D9 watcher attached after %u scans",attempt);device->Release();DestroyWindow(probe);api->Release();return 0;}
+  if(attempt%20==0)logf("late D3D9 watcher waiting for game device attempt=%u",attempt);
+  Sleep(500);
+ }
+ logf("late D3D9 hook failed: no matching live game device after 30 seconds");
+ device->Release();DestroyWindow(probe);api->Release();return 0;
+}
+static bool attachLateD3DPresentHook() {
+ if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0))return false;
+ lateD3DHookAttempted=true;
+ HANDLE thread=CreateThread(nullptr,0,lateD3DPresentWatch,nullptr,0,nullptr);
+ if(!thread){lateD3DHookAttempted=false;logf("late D3D9 watcher failed to start error=%lu",GetLastError());return false;}
+ CloseHandle(thread);return true;
 }
 static bool replaceCode(BYTE* location,const BYTE* expected,SIZE_T n,const BYTE* replacement,SIZE_T size) {
  if(memcmp(location,expected,n))return false;DWORD old=0;
@@ -379,6 +514,7 @@ static void platformConfigure() {
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("platform",key,def,iniPath);};
  sharedInput=opt("shared_input",1);windowMode=std::clamp(opt("window_mode",1),0,1);
  imeIsolation=opt("disable_game_ime",1);comCompatibility=opt("com_apartment_compat",1);quickClose=opt("close_without_confirmation",1);
+ fpsLimit=std::clamp(opt("fps_limit",0),0,240);
  if(windowMode){
   HMODULE user=GetModuleHandleA("user32.dll");auto dpi=(BOOL(WINAPI*)(HANDLE))GetProcAddress(user,"SetProcessDpiAwarenessContext");
   auto threadDpi=(HANDLE(WINAPI*)(HANDLE))GetProcAddress(user,"SetThreadDpiAwarenessContext");
@@ -402,7 +538,9 @@ static void platformConfigure() {
   // immediately before main-window creation.
   if(disableIme)logf("ImmDisableIME during platform init result=%d",disableIme((DWORD)-1));
  }
- logf("platform hooks=%d shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_filter=%u IME=%d COM=%d close=%d",earlyHookCount,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleFilter,imeIsolation,comCompatibility,quickClose);
+ logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_filter=%u IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleFilter,imeIsolation,comCompatibility,quickClose,fpsLimit);
+ attachExistingMainWindow();
+ if(windowMode||fpsLimit>0)attachLateD3DPresentHook();
 }
 static void patchGraphics() {
  if(!windowMode||graphicsPatched)return;
@@ -425,6 +563,16 @@ static void patchGraphics() {
  logf("native render size getters %s %dx%d",ok?"patched":"FAILED",renderWidth,renderHeight);
 }
 static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM l) {
+ if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
+  STYLESTRUCT* style=(STYLESTRUCT*)l;
+  if(w==GWL_STYLE)style->styleNew=(style->styleNew&~(DWORD)WS_OVERLAPPEDWINDOW)|WS_POPUP;
+  else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
+ }
+ if(windowMode&&h==gameWindow&&message==WM_WINDOWPOSCHANGING&&l){
+  WINDOWPOS* pos=(WINDOWPOS*)l;pos->x=monitorBounds.left;pos->y=monitorBounds.top;
+  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
+  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);pos->hwndInsertAfter=HWND_NOTOPMOST;
+ }
  if(message==WM_CLOSE&&quickClose){logf("WM_CLOSE: normal destroy without confirmation");releaseAllScaleSurfaces();releaseAllNativeOutputChains();if(IsWindow(h))DestroyWindow(h);return 0;}
  if(message==WM_DESTROY)releaseAllNativeOutputChains();
  if(message==WM_DEVICECHANGE){std::lock_guard<std::recursive_mutex> lock(mutex);nextSourceScan=0;logf("WM_DEVICECHANGE: source rescan scheduled");}
@@ -432,6 +580,16 @@ static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM 
  return CallWindowProcA(gameWindowProc,h,message,w,l);
 }
 static LRESULT CALLBACK platformWindowProcW(HWND h,UINT message,WPARAM w,LPARAM l) {
+ if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
+  STYLESTRUCT* style=(STYLESTRUCT*)l;
+  if(w==GWL_STYLE)style->styleNew=(style->styleNew&~(DWORD)WS_OVERLAPPEDWINDOW)|WS_POPUP;
+  else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
+ }
+ if(windowMode&&h==gameWindow&&message==WM_WINDOWPOSCHANGING&&l){
+  WINDOWPOS* pos=(WINDOWPOS*)l;pos->x=monitorBounds.left;pos->y=monitorBounds.top;
+  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
+  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);pos->hwndInsertAfter=HWND_NOTOPMOST;
+ }
  if(message==WM_CLOSE&&quickClose){logf("WM_CLOSE: normal destroy without confirmation");releaseAllScaleSurfaces();releaseAllNativeOutputChains();if(IsWindow(h))DestroyWindow(h);return 0;}
  if(message==WM_DESTROY)releaseAllNativeOutputChains();
  if(message==WM_DEVICECHANGE){std::lock_guard<std::recursive_mutex> lock(mutex);nextSourceScan=0;logf("WM_DEVICECHANGE: source rescan scheduled");}
@@ -457,6 +615,7 @@ static bool chooseMainWindowA(LPCSTR cls,LPCSTR title,HWND parent) {
   if(!strcmp(cls,"Orochi_Z_PC"))return true;
   if(!_stricmp(gameExeName,"ShinSangokumusou3.exe")&&!strcmp(cls,"KOEI-Dynasty Warriors 4 Window Class"))return true;
   if((!_stricmp(gameExeName,"SM4_WIN.exe")||!_stricmp(gameExeName,"SS4.exe")||!_stricmp(gameExeName,"SS4_Plus.exe")||!_stricmp(gameExeName,"SS4_Super.exe")||!_stricmp(gameExeName,"SS4_Ultima.exe"))&&!strcmp(cls,"SM4PC"))return true;
+  if(!_stricmp(gameExeName,"SW2.exe")&&!strcmp(cls,"SW2WIN"))return true;
  }
  return title&&(ULONG_PTR)title>65535&&*title;
 }
@@ -469,9 +628,26 @@ static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int he
  gameWindow=h;gameWindowProc=(WNDPROC)(unicode?SetWindowLongPtrW(h,GWLP_WNDPROC,(LONG_PTR)platformWindowProcW):SetWindowLongPtrA(h,GWLP_WNDPROC,(LONG_PTR)platformWindowProcA));
  logApartment("after window");
  if(associateIme)associateIme(h,nullptr,0);
- if(windowMode)SetWindowPos(h,HWND_NOTOPMOST,x,y,width,height,SWP_FRAMECHANGED|SWP_NOACTIVATE);
+ if(windowMode){
+  LONG_PTR style=GetWindowLongPtrA(h,GWL_STYLE);style=(style&~(LONG_PTR)WS_OVERLAPPEDWINDOW)|WS_POPUP;SetWindowLongPtrA(h,GWL_STYLE,style);
+  LONG_PTR exStyle=GetWindowLongPtrA(h,GWL_EXSTYLE);exStyle&=~(LONG_PTR)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);SetWindowLongPtrA(h,GWL_EXSTYLE,exStyle);
+  x=monitorBounds.left;y=monitorBounds.top;width=monitorBounds.right-x;height=monitorBounds.bottom-y;
+  SetWindowPos(h,HWND_NOTOPMOST,x,y,width,height,SWP_FRAMECHANGED|SWP_NOACTIVATE);
+ }
  else SetWindowPos(h,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
  logf("main window hooked hwnd=%p unicode=%d bounds=%d,%d %dx%d",h,unicode,x,y,width,height);
+}
+static BOOL CALLBACK findExistingSW2Window(HWND h,LPARAM) {
+ if(gameWindow)return FALSE;
+ DWORD pid=0;GetWindowThreadProcessId(h,&pid);if(pid!=GetCurrentProcessId())return TRUE;
+ char cls[128]={};if(!GetClassNameA(h,cls,(int)sizeof(cls))||strcmp(cls,"SW2WIN"))return TRUE;
+ RECT r={};if(!GetWindowRect(h,&r))return TRUE;
+ configureMainWindow(h,IsWindowUnicode(h),r.left,r.top,r.right-r.left,r.bottom-r.top);
+ return FALSE;
+}
+static void attachExistingMainWindow() {
+ if(gameWindow||_stricmp(gameExeName,"SW2.exe"))return;
+ EnumWindows(findExistingSW2Window,0);
 }
 static HWND WINAPI platformCreateWindow(DWORD ex,LPCSTR cls,LPCSTR title,DWORD style,int x,int y,int width,int height,HWND parent,HMENU menu,HINSTANCE inst,LPVOID param) {
  initializeAll();bool target=chooseMainWindowA(cls,title,parent);
@@ -526,7 +702,7 @@ static bool containsTextInsensitive(const wchar_t* text,const wchar_t* needle) {
 }
 static bool isExitConfirmation(const wchar_t* text) {
  return containsTextInsensitive(text,L"结束游戏")||containsTextInsensitive(text,L"退出游戏")||
-  containsTextInsensitive(text,L"返回Windows")||containsTextInsensitive(text,L"return to windows")||
+  containsTextInsensitive(text,L"返回Windows")||containsTextInsensitive(text,L"返回Ｗｉｎｄｏｗｓ")||containsTextInsensitive(text,L"return to windows")||
   containsTextInsensitive(text,L"quit game")||containsTextInsensitive(text,L"exit game");
 }
 static int WINAPI platformMessageBox(HWND h,LPCSTR text,LPCSTR title,UINT flags) {
@@ -567,6 +743,10 @@ static HRESULT WINAPI platformCoInitializeLegacy(LPVOID reserved) {
 }
 static FARPROC WINAPI platformGetProcAddress(HMODULE module,LPCSTR name) {
  if(!realGetProcAddress)return nullptr;
+ if((ULONG_PTR)name>65535&&module==GetModuleHandleA("d3d9.dll")&&!_stricmp(name,"Direct3DCreate9")){
+  realCreateD3D=(decltype(realCreateD3D))realGetProcAddress(module,name);
+  logf("dynamic API hook: d3d9!Direct3DCreate9");return (FARPROC)platformCreateD3D;
+ }
  if((ULONG_PTR)name>65535&&module==GetModuleHandleA("user32.dll")) {
   if(!_stricmp(name,"CreateWindowExA")){logf("dynamic API hook: user32!%s",name);realCreateWindow=(decltype(realCreateWindow))realGetProcAddress(module,name);return (FARPROC)platformCreateWindow;}
   if(!_stricmp(name,"CreateWindowExW")){realCreateWindowW=(decltype(realCreateWindowW))realGetProcAddress(module,name);return (FARPROC)platformCreateWindowW;}
@@ -604,7 +784,14 @@ static bool patchImport(const char* dllName,const char* functionName,void* hook,
  }
  return false;
 }
+static void installDeferredGetProcHook() {
+ if(deferGetProcHook&&patchImport("kernel32.dll","GetProcAddress",(void*)platformGetProcAddress,(void**)&realGetProcAddress)){
+  deferGetProcHook=false;logf("deferred GetProcAddress hook installed after DirectInput startup");
+ }
+}
 [[maybe_unused]] static void installEarlyHooks() {
+ char exe[MAX_PATH]={};GetModuleFileNameA(nullptr,exe,MAX_PATH);const char* name=strrchr(exe,'\\');name=name?name+1:exe;
+ deferGetProcHook=!_stricmp(name,"SW2.exe");
  struct Entry{const char* dll;const char* name;void* hook;void** original;};
  Entry hooks[]={
   {"user32.dll","CreateWindowExA",(void*)platformCreateWindow,(void**)&realCreateWindow},
@@ -619,5 +806,5 @@ static bool patchImport(const char* dllName,const char* functionName,void* hook,
   {"ole32.dll","CoInitialize",(void*)platformCoInitializeLegacy,(void**)&realCoInitializeLegacy},
   {"d3d9.dll","Direct3DCreate9",(void*)platformCreateD3D,(void**)&realCreateD3D},
   {"kernel32.dll","GetProcAddress",(void*)platformGetProcAddress,(void**)&realGetProcAddress}};
- for(auto& hook:hooks)if(patchImport(hook.dll,hook.name,hook.hook,hook.original))earlyHookCount++;
+ for(size_t i=0;i<sizeof(hooks)/sizeof(hooks[0]);i++){auto& hook=hooks[i];if(deferGetProcHook&&!strcmp(hook.name,"GetProcAddress"))continue;if(patchImport(hook.dll,hook.name,hook.hook,hook.original)){earlyHookCount++;if(i<32)earlyHookMask|=1u<<i;}}
 }

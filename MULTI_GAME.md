@@ -9,4 +9,6 @@
 
 `OROCHI_Z_TC.exe` (无双蛇魔Z) continues to use `OrochiZPadX.ini`.
 
+`Sengoku Musou 2` uses `build/dinput8.dll` and `SM2_Tweaks.ini`. The config enables XInput/native DS4 adaptation, removes the window-close confirmation, and paces the game's D3D9 presents to 75 FPS. It keeps the current game render size and does not change the Windows desktop resolution or refresh rate. The original EXE started after its missing PC `linkdata` assets were restored; no system security or SafeDisc setting was changed. See `SW2_DIAGNOSIS.md`.
+
 Run `build.cmd` and `build-platform.cmd` from a Visual Studio x86 developer environment to rebuild both variants. `install-targets.ps1` installs only the compatible targets and creates timestamped backups with `manifest.json`.

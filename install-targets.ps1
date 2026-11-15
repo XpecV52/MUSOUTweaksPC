@@ -5,20 +5,23 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$patchedGames = @('ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch')
+$patchedGames = @('ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch','SW2')
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in $patchedGames }
 if ($running) { throw "Exit patched games before installing: $($running.ProcessName -join ', ')" }
 $targets = @(
     @{ dir = $Shin3; dll = 'build\dinput8.dll'; ini = 'SSM3_Tweaks.ini' },
     @{ dir = $Shin4; dll = 'build\dinput8.dll'; ini = 'SSM4_Tweaks.ini' },
+    @{ dir = $Sengoku2; dll = 'build\dinput8.dll'; ini = 'SM2_Tweaks.ini' },
     @{ dir = $Dynasty8; dll = 'build\dinput8-platform.dll'; ini = 'SSM7_Tweaks.ini' }
 )
 foreach ($item in $targets) {
     $target = (Resolve-Path -LiteralPath $item.dir).Path
-    $backup = Join-Path $target ('OrochiZPadX-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+    $backup = Join-Path $target ('MUSOUTweaksPC-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
     New-Item -ItemType Directory -Path $backup | Out-Null
     $manifest = @()
-    foreach ($name in @('dinput8.dll', $item.ini, 'OrochiZPadX.ini', 'OrochiZPadX.log')) {
+    $backupNames = @('dinput8.dll', $item.ini, 'OrochiZPadX.ini', 'OrochiZPadX.log', 'MUSOUTweaksPC.log')
+    if ($item.ini -eq 'SM2_Tweaks.ini') { $backupNames += 'SSM2_Tweaks.ini' }
+    foreach ($name in $backupNames) {
         $destination = Join-Path $target $name
         $existed = Test-Path -LiteralPath $destination
         if ($existed) { Copy-Item -LiteralPath $destination -Destination (Join-Path $backup $name) -Force }
@@ -29,10 +32,14 @@ foreach ($item in $targets) {
     $newConfig = Join-Path $target $item.ini
     $oldConfig = Join-Path $target 'OrochiZPadX.ini'
     if (-not (Test-Path -LiteralPath $newConfig)) {
-        if (Test-Path -LiteralPath $oldConfig) { Copy-Item -LiteralPath $oldConfig -Destination $newConfig }
+        if ($item.ini -ne 'SM2_Tweaks.ini' -and (Test-Path -LiteralPath $oldConfig)) { Copy-Item -LiteralPath $oldConfig -Destination $newConfig }
         else { Copy-Item -LiteralPath (Join-Path $root $item.ini) -Destination $newConfig }
     }
-    if (Test-Path -LiteralPath $oldConfig) { Remove-Item -LiteralPath $oldConfig }
+    if ($item.ini -ne 'SM2_Tweaks.ini' -and (Test-Path -LiteralPath $oldConfig)) { Remove-Item -LiteralPath $oldConfig }
+    if ($item.ini -eq 'SM2_Tweaks.ini') {
+        $legacyConfig = Join-Path $target 'SSM2_Tweaks.ini'
+        if (Test-Path -LiteralPath $legacyConfig) { Remove-Item -LiteralPath $legacyConfig }
+    }
     Write-Output "Installed: $target"
     Write-Output "Backup: $backup"
 }

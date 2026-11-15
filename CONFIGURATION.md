@@ -1,4 +1,4 @@
-# MUSOUTweaksPC 2.9 自定义配置说明
+# MUSOUTweaksPC 2.16 配置说明
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
 
@@ -7,13 +7,14 @@
 | 无双蛇魔 Z (`OROCHI_Z_TC.exe`) | `OrochiZPadX.ini` |
 | 真三国无双3 (`ShinSangokumusou3.exe`) | `SSM3_Tweaks.ini` |
 | 真三国无双4 (`SM4_WIN.exe`、`SS4*.exe`) | `SSM4_Tweaks.ini` |
+| 战国无双2 (`SW2.exe`) | `SM2_Tweaks.ini` |
 | 真三国无双7 / Dynasty Warriors 8 (`Launch.exe`) | `SSM7_Tweaks.ini` |
 
 ## 主产物与文件
 
 - `dinput8.dll`：主产物。放在对应游戏可执行文件同一目录，由游戏自动加载。
 - 上表所列 `.ini`：可选配置文件，和 DLL 放在同一目录。
-- `OrochiZPadX.log`：诊断日志。仅在 `log=1` 时写入。
+- `MUSOUTweaksPC.log`：诊断日志。仅在 `log=1` 时写入。
 
 配置项使用 `名称=数值` 格式。`1` 表示开启，`0` 表示关闭。缺少配置项时会采用本文列出的默认值；超出允许范围的数值会自动限制到有效范围。
 
@@ -24,7 +25,7 @@
 | 配置项 | 默认值 | 作用与可用值 |
 |---|---:|---|
 | `enable` | `1` | 开启虚拟 DirectInput 手柄适配。设为 `0` 后不再替换游戏的 DirectInput 接口；`[platform]` 下的窗口、输入法等功能仍独立生效。|
-| `log` | `1` | 写入 `OrochiZPadX.log`。排障时保持 `1`；不需要日志可设为 `0`。|
+| `log` | `1` | 写入 `MUSOUTweaksPC.log`。排障时保持 `1`；不需要日志可设为 `0`。|
 | `backend` | `0` | 手柄来源：`0` 自动（优先 XInput，未找到时选择原生 Sony DS4）；`1` 只使用 XInput；`2` 只使用原生 Sony DS4。自动模式连接后保持当前来源，断开后再重新选择。|
 | `xinput_slot` | `-1` | XInput 手柄槽位。`-1` 自动选第一个在线槽位；`0`–`3` 固定使用对应槽位。指定槽位会优先于自动选择。|
 | `foreground_only` | `1` | 仅游戏位于前台时把手柄状态交给游戏。建议保持开启，以免切到桌面或其他程序时游戏仍接收手柄输入。|
@@ -55,6 +56,7 @@
 | `disable_game_ime` | `1` | 隔离游戏进程内的输入法上下文，绕过中文 IME 参与游戏初始化时出现的启动崩溃。不会切换系统输入法，也不支持在游戏内部输入中文。设为 `0` 可恢复游戏原有 IME 行为。|
 | `com_apartment_compat` | `1` | 兼容游戏初始化时遇到的 COM apartment 模式冲突。修复只针对已确认的游戏调用点和 `RPC_E_CHANGED_MODE`；其他 COM 错误不会被忽略。建议保持开启。|
 | `close_without_confirmation` | `1` | 关闭游戏窗口时绕过游戏的关闭确认框，并继续走游戏正常销毁/退出流程。设为 `0` 可恢复原确认框。|
+| `fps_limit` | `0` | D3D9 Present 帧率上限，范围 `0`–`240`；`0` 不限帧。SW2 的 `SM2_Tweaks.ini` 默认使用 `75`，按 75 FPS 节拍提交画面。它不调用系统显示模式切换 API，不修改 Windows 桌面分辨率或刷新率。|
 
 自定义分辨率示例：
 
@@ -123,6 +125,6 @@ close_without_confirmation=0
 1. 正常退出游戏。
 2. 用文本编辑器修改上表对应的游戏配置文件，保存为普通文本。保留 `[padfix]`、`[platform]` 区段名。
 3. 启动游戏。配置只在启动时读取，游戏运行期间改文件不会即时生效。
-4. 若需恢复原版本，先退出游戏，再运行项目包中的 `restore.ps1` 并指定安装时生成的 `OrochiZPadX-backup-时间戳` 备份目录。
+4. 若需恢复原版本，先退出游戏，再运行项目包中的 `restore.ps1` 并指定安装时生成的 `MUSOUTweaksPC-backup-时间戳` 备份目录。
 
-配置文件无法修复不受支持的游戏 EXE 指纹；修改 DLL、EXE 或菜单映射代码并非普通配置操作。出现问题时先恢复默认 INI，并查看同目录 `OrochiZPadX.log`。
+配置文件无法修复不受支持的游戏 EXE 指纹；修改 DLL、EXE 或菜单映射代码并非普通配置操作。出现问题时先恢复默认 INI，并查看同目录 `MUSOUTweaksPC.log`。

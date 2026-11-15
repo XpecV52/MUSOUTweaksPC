@@ -110,7 +110,7 @@ static bool readDs4(XINPUT_STATE& s) {
  if(!sourcePad&&GetTickCount64()>=nextSourceScan) {
   nextSourceScan=GetTickCount64()+2000;
   if(!sourceInput&&createSystemInput)createSystemInput(GetModuleHandleA(nullptr),0x800,IID_IDirectInput8A,(void**)&sourceInput,nullptr);
-  if(!sourceWindow)sourceWindow=CreateWindowExA(0,"STATIC","OrochiZPadX input",0,0,0,1,1,nullptr,nullptr,GetModuleHandleA(nullptr),nullptr);
+  if(!sourceWindow)sourceWindow=CreateWindowExA(0,"STATIC","MUSOUTweaksPC input",0,0,0,1,1,nullptr,nullptr,GetModuleHandleA(nullptr),nullptr);
   if(sourceInput&&sourceWindow)sourceInput->EnumDevices(DI8DEVCLASS_GAMECTRL,ds4Candidate,nullptr,DIEDFL_ATTACHEDONLY);
  }
  if(!sourcePad)return false;
@@ -123,6 +123,7 @@ static const char* configFileNameForExecutable(const char* executable) {
  if(!_stricmp(executable,"ShinSangokumusou3.exe"))return "SSM3_Tweaks.ini";
  if(!_stricmp(executable,"SM4_WIN.exe")||!_stricmp(executable,"SS4.exe")||!_stricmp(executable,"SS4_Plus.exe")||!_stricmp(executable,"SS4_Super.exe")||!_stricmp(executable,"SS4_Ultima.exe"))return "SSM4_Tweaks.ini";
  if(!_stricmp(executable,"Launch.exe"))return "SSM7_Tweaks.ini";
+ if(!_stricmp(executable,"SW2.exe"))return "SM2_Tweaks.ini";
  return "OrochiZPadX.ini";
 }
 static void init() {
@@ -130,11 +131,11 @@ static void init() {
  char* slash=strrchr(iniPath,'\\'); if(slash)slash[1]=0;
  char executablePath[MAX_PATH]={};GetModuleFileNameA(nullptr,executablePath,MAX_PATH);const char* executable=strrchr(executablePath,'\\');executable=executable?executable+1:executablePath;
  strcpy_s(gameExeName,executable);
- strcpy_s(logPath,iniPath);strcat_s(logPath,"OrochiZPadX.log");strcat_s(iniPath,configFileNameForExecutable(executable));
+ strcpy_s(logPath,iniPath);strcat_s(logPath,"MUSOUTweaksPC.log");strcat_s(iniPath,configFileNameForExecutable(executable));
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",1,iniPath)!=0;
  platformConfigure();
- logf("OrochiZPadX 2.9 platform-only x86 config=%s",iniPath);
+ logf("MUSOUTweaksPC 2.16 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -150,7 +151,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("OrochiZPadX 2.9 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.16 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -186,6 +187,7 @@ static void installMenuDpad() {
 struct PadState { LONG x=0,y=0; BYTE buttons[20]={}; WORD dpad=0; };
 static int selectedSlot=-1;
 static bool armed=false, wasConnected=false, wasForeground=false, neutralPending=false;
+static int loggedForeground=-1;
 static ULONGLONG neutralSince;
 static ULONGLONG lastConnection;
 static WORD loggedDpad=0xffff;
@@ -210,6 +212,7 @@ static PadState sample() {
   if(slotConfig<0)selectedSlot=-1;
  }
  bool fg=foreground();
+ if(loggedForeground!=(int)fg){loggedForeground=(int)fg;logf("controller game_foreground=%d",fg);}
  if(connected!=wasConnected){logf("controller %s backend=%s slot=%d",connected?"connected":"disconnected",selectedBackend==2?"DS4":"XInput",selectedSlot);wasConnected=connected;}
  if(!connected||!fg||!wasForeground){armed=false;neutralPending=false;}
  wasForeground=fg;
@@ -232,6 +235,8 @@ static PadState sample() {
  out.buttons[10]=g.bLeftTrigger>=triggerThreshold?0x80:0;
  out.buttons[11]=g.bRightTrigger>=triggerThreshold?0x80:0;
  out.dpad=g.wButtons&15;
+ static WORD loggedForwardedDpad=0xffff;
+ if(out.dpad!=loggedForwardedDpad){loggedForwardedDpad=out.dpad;logf("virtual DirectInput forwarded D-pad bits=%x left=%ld,%ld",out.dpad,out.x,out.y);}
  out.buttons[12]=(out.dpad&XINPUT_GAMEPAD_DPAD_UP)?0x80:0;
  out.buttons[13]=(out.dpad&XINPUT_GAMEPAD_DPAD_DOWN)?0x80:0;
  out.buttons[14]=(out.dpad&XINPUT_GAMEPAD_DPAD_LEFT)?0x80:0;
@@ -254,7 +259,7 @@ static PadState sample() {
 static DIDEVICEINSTANCEA instance() {
  DIDEVICEINSTANCEA i={};i.dwSize=sizeof(i);i.guidInstance=i.guidProduct=padGuid;
  i.dwDevType=DI8DEVTYPE_GAMEPAD|(DI8DEVTYPEGAMEPAD_STANDARD<<8);
- strcpy_s(i.tszInstanceName,"OrochiZ Gamepad");strcpy_s(i.tszProductName,"OrochiZ Gamepad");return i;
+ strcpy_s(i.tszInstanceName,"MUSOUTweaksPC Gamepad");strcpy_s(i.tszProductName,"MUSOUTweaksPC Gamepad");return i;
 }
 struct Field { DWORD offset,type;int index; };
 class Device final:public IDirectInputDevice8A {
@@ -417,7 +422,7 @@ public:
  HRESULT STDMETHODCALLTYPE GetDeviceStatus(REFGUID g) override{return g==padGuid?DI_OK:real->GetDeviceStatus(g);}
  HRESULT STDMETHODCALLTYPE RunControlPanel(HWND w,DWORD f) override{return real->RunControlPanel(w,f);}
  HRESULT STDMETHODCALLTYPE Initialize(HINSTANCE h,DWORD v) override{return real->Initialize(h,v);}
- HRESULT STDMETHODCALLTYPE FindDevice(REFGUID g,LPCSTR n,LPGUID out) override {if(n&&!strcmp(n,"OrochiZ Gamepad")){if(!out)return E_POINTER;*out=padGuid;return DI_OK;}return real->FindDevice(g,n,out);}
+ HRESULT STDMETHODCALLTYPE FindDevice(REFGUID g,LPCSTR n,LPGUID out) override {if(n&&!strcmp(n,"MUSOUTweaksPC Gamepad")){if(!out)return E_POINTER;*out=padGuid;return DI_OK;}return real->FindDevice(g,n,out);}
  HRESULT STDMETHODCALLTYPE EnumDevicesBySemantics(LPCSTR,LPDIACTIONFORMATA,LPDIENUMDEVICESBYSEMANTICSCBA,LPVOID,DWORD) override{return DIERR_UNSUPPORTED;}
  HRESULT STDMETHODCALLTYPE ConfigureDevices(LPDICONFIGUREDEVICESCALLBACK,LPDICONFIGUREDEVICESPARAMSA,DWORD,LPVOID) override{return DIERR_UNSUPPORTED;}
 };
