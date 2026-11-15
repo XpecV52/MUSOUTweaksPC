@@ -80,7 +80,8 @@ static void getNativeDisplaySize(UINT& width,UINT& height) {
  }
 }
 static bool needsNativeOutputChain(const D3DPRESENT_PARAMETERS& p) {
- return nativeResolution&&scaleToFill&&gameWindow&&p.hDeviceWindow==gameWindow&&!_stricmp(gameExeName,"Launch.exe");
+ bool target=!_stricmp(gameExeName,"Launch.exe")||isSsm6DxExecutable(gameExeName);
+ return nativeResolution&&scaleToFill&&target&&gameWindow&&p.hDeviceWindow==gameWindow;
 }
 static void releaseNativeScaler(void* device) {
  IDirect3DTexture9* texture=nullptr;IDirect3DPixelShader9* shader=nullptr;
