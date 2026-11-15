@@ -12,5 +12,5 @@
 
 配置保留英文键名并附有中文注释，修改后重启游戏。蛇魔 Z 使用 `OrochiZPadX.ini`；战国2、真三3、真三4、真三6 DX、真三7 分别使用 `SM2_Tweaks.ini`、`SSM3_Tweaks.ini`、`SSM4_Tweaks.ini`、`SSM6_Tweaks.ini`、`SSM7_Tweaks.ini`。
 
-- `[padfix]`：`enable` 控制手柄适配，`backend` 选择自动/XInput/原生 DS4；`dpad_menu_navigation`、`dpad_as_left_stick` 和 `dpad_pov` 控制十字键；其余项目调整摇杆死区、扳机阈值和连接保护。
+- `[padfix]`：`enable` 控制手柄适配，`backend` 选择自动/XInput/原生 DS4；`dpad_menu_navigation`、`dpad_as_left_stick` 和 `dpad_pov` 控制十字键；真三3自动、真三6 DX 配置显式将十字键同步到左摇杆以导航菜单；其余项目调整摇杆死区、扳机阈值和连接保护。
 - `[platform]`：`window_mode` 开启无边框窗口；真三6 DX 与真三7都通过 D3D9 输出链和 Catmull-Rom 滤镜缩放至当前桌面尺寸；`shared_input`、`disable_game_ime`、`com_apartment_compat`、`close_without_confirmation` 分别控制后台输入、输入法隔离、COM 兼容和关闭确认框。

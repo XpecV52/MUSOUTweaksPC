@@ -3,7 +3,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '2.18'
+VERSION = '2.19'
 files = ['README.md','OrochiZPadX.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini',
          'SSM6_Tweaks.ini','SM2_Tweaks.ini','SSM7_Tweaks.ini','CONFIGURATION.md','MULTI_GAME.md',
          'SW2_DIAGNOSIS.md','install-targets.ps1','install-sw2.ps1','install-ssm6dx.ps1','restore.ps1',

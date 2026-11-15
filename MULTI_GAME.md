@@ -7,7 +7,7 @@
 
 `build/dinput8-platform.dll` contains platform hooks and is installed in `Dynasty Warriors 8` (真三国无双7). `Launch.exe` reads `SSM7_Tweaks.ini`; the D3D9 backbuffer matches the active monitor while the game's logical render size is preserved.
 
-`Dynasty Warriors 7 DX` (真三国无双6 with 猛将传 DX) uses `build/dinput8.dll` and `SSM6_Tweaks.ini` for `SM6TC.exe`, `SM6EN.exe`, and `SM6JP.exe`. The profile enables XInput/native-DS4 adaptation, D-pad buttons/POV, hot-plug, borderless display, and the same native-resolution D3D9 output-chain scaling used by Dynasty Warriors 8. `install-ssm6dx.ps1` installs only this title and makes a timestamped backup.
+`Dynasty Warriors 7 DX` (真三国无双6 with 猛将传 DX) uses `build/dinput8.dll` and `SSM6_Tweaks.ini` for `SM6TC.exe`, `SM6EN.exe`, and `SM6JP.exe`. The profile enables XInput/native-DS4 adaptation, D-pad buttons/POV and left-stick menu navigation, hot-plug, borderless display, and the same native-resolution D3D9 output-chain scaling used by Dynasty Warriors 8. `install-ssm6dx.ps1` installs only this title and makes a timestamped backup.
 
 `OROCHI_Z_TC.exe` (无双蛇魔Z) continues to use `OrochiZPadX.ini`.
 
