@@ -3,10 +3,10 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '2.16'
+VERSION = '2.17'
 files = ['README.md','OrochiZPadX.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini',
-         'SM2_Tweaks.ini','SSM7_Tweaks.ini','CONFIGURATION.md','MULTI_GAME.md',
-         'SW2_DIAGNOSIS.md','install-targets.ps1','install-sw2.ps1','restore.ps1',
+         'SSM6_Tweaks.ini','SM2_Tweaks.ini','SSM7_Tweaks.ini','CONFIGURATION.md','MULTI_GAME.md',
+         'SW2_DIAGNOSIS.md','install-targets.ps1','install-sw2.ps1','install-ssm6dx.ps1','restore.ps1',
          'build.cmd','build-platform.cmd','package.py','.gitignore',
          'build/dinput8.dll','build/dinput8-platform.dll',
          'src/padfix.cpp','src/platform.inc','src/dinput8.def','src/dinput8-platform.def']

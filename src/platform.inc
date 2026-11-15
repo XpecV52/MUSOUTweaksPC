@@ -25,6 +25,10 @@ static bool forceNativeBuffer=false;
 static bool deferGetProcHook=false;
 static bool lateD3DHookAttempted=false;
 static char gameExeName[MAX_PATH];
+static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int height);
+static bool isSsm6DxExecutable(const char* name) {
+ return !_stricmp(name,"SM6TC.exe")||!_stricmp(name,"SM6EN.exe")||!_stricmp(name,"SM6JP.exe");
+}
 static decltype(&CreateWindowExA) realCreateWindow;
 static decltype(&CreateWindowExW) realCreateWindowW;
 static decltype(&SetWindowPos) realSetWindowPos;
@@ -403,6 +407,16 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
 static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE type,HWND focus,DWORD flags,D3DPRESENT_PARAMETERS* p,IDirect3DDevice9** out) {
  if(!p||!out)return D3DERR_INVALIDCALL;
  attachExistingMainWindow();
+ if(!gameWindow&&isSsm6DxExecutable(gameExeName)){
+  HWND candidate=p->hDeviceWindow?p->hDeviceWindow:focus;
+  if(candidate&&IsWindow(candidate))candidate=GetAncestor(candidate,GA_ROOT);
+  DWORD owner=0;if(candidate)GetWindowThreadProcessId(candidate,&owner);
+  RECT bounds={};
+  if(candidate&&owner==GetCurrentProcessId()&&GetWindowRect(candidate,&bounds)){
+   configureMainWindow(candidate,IsWindowUnicode(candidate),bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);
+   logf("SM6 DX main window recovered from D3D9 device hwnd=%p",candidate);
+  }
+ }
  logf("D3D9 CreateDevice hook entered focus=%p present_hwnd=%p game_hwnd=%p fps_limit=%d",focus,p->hDeviceWindow,gameWindow,fpsLimit);
  auto fn=(HRESULT(WINAPI*)(IDirect3D9*,UINT,D3DDEVTYPE,HWND,DWORD,D3DPRESENT_PARAMETERS*,IDirect3DDevice9**))originalMethod(d,16);
  bool ours=gameWindow&&(focus==gameWindow||p->hDeviceWindow==gameWindow);

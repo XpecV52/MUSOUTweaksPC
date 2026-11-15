@@ -2,14 +2,15 @@
 
 ## 做什么
 
-32 位 DLL 补丁，为真三国无双3、真三国无双4 Special 和 战国无双2 提供 XInput/原生 DS4 手柄适配、按键修复、热插拔与窗口输入兼容；为 真三国无双7 with 猛将传 启用无边框窗口和清晰缩放。为处理战国无双2高刷下游戏加速问题,针对配置额外将游戏帧节拍限制到 75 FPS ，且不切换 Windows 桌面分辨率或刷新率，并跳过关闭游戏时的确认框。
+32 位 DLL 补丁，为真三国无双3、真三国无双4 Special、真三国无双6 猛将传 DX 和《战国无双2》提供 XInput/原生 DS4 手柄适配、按键修复、热插拔和窗口输入兼容；为真三国无双7 with 猛将传提供无边框窗口和清晰缩放。真三6 DX 使用桌面原生分辨率渲染；SW2 另限制为 75 FPS 并跳过关闭确认框。
 
 ## 安装
-下载解压对应补丁放到游戏根目录下即可
+
+把发布包对应的 DLL 和配置放入游戏根目录。真三6 DX 可运行 `install-ssm6dx.ps1` 自动安装并备份；恢复时使用备份目录运行 `restore.ps1`。
 
 ## 配置
 
-各游戏目录的配置保留英文键名并附有中文注释，改动后重启游戏。战国无双2 使用 `SM2_Tweaks.ini`，真三3 使用 `SSM3_Tweaks.ini`，真三4 使用 `SSM4_Tweaks.ini`，真三7 使用 `SSM7_Tweaks.ini`。
+配置保留英文键名并附有中文注释，修改后重启游戏。蛇魔 Z 使用 `OrochiZPadX.ini`；战国2、真三3、真三4、真三6 DX、真三7 分别使用 `SM2_Tweaks.ini`、`SSM3_Tweaks.ini`、`SSM4_Tweaks.ini`、`SSM6_Tweaks.ini`、`SSM7_Tweaks.ini`。
 
-- `[padfix]`：`enable` 控制手柄适配；`backend` 选择自动/XInput/原生 DS4；`dpad_menu_navigation` 补充菜单十字键；`dpad_as_left_stick=-1` 自动只在真三3把十字键同步到左摇杆；`dpad_pov`、`left_deadzone`、`right_threshold`、`trigger_threshold`、`neutral_ms` 和 `ds4_right_x/y` 控制方向帽、摇杆、扳机、连接保护和 DS4 轴位。
-- `[platform]`：`window_mode` 开启无边框窗口；`render_width/height=0` 通常保留旧游戏自己的逻辑尺寸；`native_resolution=1` 让 真三7 使用显示器分辨率输出链，`scale_to_fill=1` 将原生逻辑画面铺满，`scale_filter=2` 使用清晰的 Catmull-Rom 缩放；`shared_input=1` 解除键鼠独占和光标限制，便于前台游戏运行时使用后台热键；`disable_game_ime`、`com_apartment_compat`、`close_without_confirmation` 分别控制游戏内输入法隔离、COM 兼容和关闭确认框。
+- `[padfix]`：`enable` 控制手柄适配，`backend` 选择自动/XInput/原生 DS4；`dpad_menu_navigation`、`dpad_as_left_stick` 和 `dpad_pov` 控制十字键；其余项目调整摇杆死区、扳机阈值和连接保护。
+- `[platform]`：`window_mode` 开启无边框窗口；DW8 使用显示器分辨率输出链缩放，真三6 DX 直接按桌面分辨率渲染；`shared_input`、`disable_game_ime`、`com_apartment_compat`、`close_without_confirmation` 分别控制后台输入、输入法隔离、COM 兼容和关闭确认框。

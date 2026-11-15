@@ -122,6 +122,7 @@ static bool readDs4(XINPUT_STATE& s) {
 static const char* configFileNameForExecutable(const char* executable) {
  if(!_stricmp(executable,"ShinSangokumusou3.exe"))return "SSM3_Tweaks.ini";
  if(!_stricmp(executable,"SM4_WIN.exe")||!_stricmp(executable,"SS4.exe")||!_stricmp(executable,"SS4_Plus.exe")||!_stricmp(executable,"SS4_Super.exe")||!_stricmp(executable,"SS4_Ultima.exe"))return "SSM4_Tweaks.ini";
+ if(!_stricmp(executable,"SM6TC.exe")||!_stricmp(executable,"SM6EN.exe")||!_stricmp(executable,"SM6JP.exe"))return "SSM6_Tweaks.ini";
  if(!_stricmp(executable,"Launch.exe"))return "SSM7_Tweaks.ini";
  if(!_stricmp(executable,"SW2.exe"))return "SM2_Tweaks.ini";
  return "OrochiZPadX.ini";
@@ -135,7 +136,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",1,iniPath)!=0;
  platformConfigure();
- logf("MUSOUTweaksPC 2.16 platform-only x86 config=%s",iniPath);
+ logf("MUSOUTweaksPC 2.17 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -151,7 +152,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.16 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.17 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
