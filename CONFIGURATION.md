@@ -1,4 +1,4 @@
-# MUSOUTweaksPC 2.20 配置说明
+# MUSOUTweaksPC 2.21 配置说明
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
 
@@ -69,6 +69,10 @@ render_height=1080
 ```
 
 `render_width` 和 `render_height` 可分别设为 `0`。蛇魔 Z 此时采用主显示器尺寸并由已验证的游戏专用分辨率钩子更新内部尺寸；其他旧游戏保留引擎当前画面尺寸。DW8 和真三6 DX 使用独立 D3D9 输出链，将游戏逻辑画面用 `scale_filter` 指定的滤镜铺满显示器。`scale_filter=2` 使用 Catmull-Rom 重建，避免普通线性插值带来的额外柔化。显卡或显存无法创建目标尺寸时，游戏仍会返回真实的 Direct3D 错误。不同宽高比与 HUD 排列仍需逐项验收。
+
+## 真三6 DX 额外补丁
+
+仅 `SM6TC.exe` 会由 `install-ssm6dx.ps1` 安装 `Fix_for_SM6.dll` 与 `resolution_for_SM6TC.dll`。它们由 `d3dx9_43.dll` Mod Loader 从 `mods` 子目录加载；各自的 `enable.txt` 设为 `1` 启用、`0` 禁用。分辨率扩展当前把游戏内部渲染尺寸设为 `2560×1440`；主补丁仍会把输出缩放到当前桌面尺寸。扩展 DLL 为随项目提供的二进制，未提供源码。
 
 ## 常用配置组合
 

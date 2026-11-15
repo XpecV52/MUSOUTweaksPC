@@ -8,13 +8,25 @@ $target = Split-Path -Parent $backup
 $manifestPath = Join-Path $backup 'manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw 'Backup directory must contain manifest.json.' }
 $entries = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+$allowedFiles = @(
+    'dinput8.dll','d3dx9_43.dll','OrochiZPadX.ini','SM2_Tweaks.ini','SSM2_Tweaks.ini',
+    'SSM3_Tweaks.ini','SSM4_Tweaks.ini','SSM6_Tweaks.ini','SSM7_Tweaks.ini',
+    'OrochiZPadX.log','MUSOUTweaksPC.log','OrochiZPadX-diagnose.exe',
+    'mods\Fix_for_SM6.dll','mods\Fix_for_SM6\enable.txt',
+    'mods\resolution_for_SM6TC.dll','mods\resolution_for_SM6TC\config.ini',
+    'mods\resolution_for_SM6TC\enable.txt','mods\resolution_for_SM6TC\load.txt'
+)
 foreach ($entry in $entries) {
-    if ($entry.name -notin @('dinput8.dll','OrochiZPadX.ini','SM2_Tweaks.ini','SSM2_Tweaks.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini','SSM6_Tweaks.ini','SSM7_Tweaks.ini','OrochiZPadX.log','MUSOUTweaksPC.log','OrochiZPadX-diagnose.exe')) { throw 'Unrecognized manifest file.' }
+    if ($entry.name -notin $allowedFiles) { throw 'Unrecognized manifest file.' }
     if ($entry.existed -and -not (Test-Path -LiteralPath (Join-Path $backup $entry.name))) { throw "Missing backup: $($entry.name)" }
 }
 foreach ($entry in $entries) {
     $destination = Join-Path $target $entry.name
-    if ($entry.existed) { Copy-Item -LiteralPath (Join-Path $backup $entry.name) -Destination $destination -Force }
+    if ($entry.existed) {
+        $destinationParent = Split-Path -Parent $destination
+        if (-not (Test-Path -LiteralPath $destinationParent)) { New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null }
+        Copy-Item -LiteralPath (Join-Path $backup $entry.name) -Destination $destination -Force
+    }
     elseif (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination }
 }
 Write-Output "Restored from: $backup"
