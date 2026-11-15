@@ -1,14 +1,14 @@
-# 无双系列 PC 修复补丁
+# 老无双系列 PC 修复补丁
 
 ## 做什么
 
-32 位 DLL 补丁，为真三国无双3、真三国无双4 和《战国无双2》提供 XInput/原生 DS4 手柄适配、按键修复、热插拔与窗口输入兼容；为《Dynasty Warriors 8》（真三国无双7）启用无边框窗口和清晰缩放。SW2 配置额外将游戏帧节拍限制到 75 FPS，且不切换 Windows 桌面分辨率或刷新率，并跳过关闭游戏时的确认框。
+32 位 DLL 补丁，为真三国无双3、真三国无双4 Special 和 战国无双2 提供 XInput/原生 DS4 手柄适配、按键修复、热插拔与窗口输入兼容；为 真三国无双7 with 猛将传 启用无边框窗口和清晰缩放。为处理战国无双2高刷下游戏加速问题,针对配置额外将游戏帧节拍限制到 75 FPS ，且不切换 Windows 桌面分辨率或刷新率，并跳过关闭游戏时的确认框。
 
 ## 安装
 
 退出游戏后，在项目目录运行 `install-targets.ps1` 安装所有支持目标；只安装战国无双2时运行 `install-sw2.ps1`。脚本会为被替换的文件生成带 manifest 的时间戳备份。
 
-使用 Visual Studio x86 C++ 环境运行 `build.cmd` 与 `build-platform.cmd`。主产物为 `build\dinput8.dll`，DW8 使用 `build\dinput8-platform.dll`。卸载时按备份 manifest 运行 `restore.ps1`。完整配置说明见 `CONFIGURATION.md`。
+使用 Visual Studio x86 C++ 环境运行 `build.cmd` 与 `build-platform.cmd`。主产物为 `build\dinput8.dll`，真三7 使用 `build\dinput8-platform.dll`。卸载时按备份 manifest 运行 `restore.ps1`。完整配置说明见 `CONFIGURATION.md`。
 
 ## 配置
 
