@@ -444,9 +444,11 @@ static IDirect3D9* WINAPI platformCreateD3D(UINT sdk) {
  if(d&&(windowMode||fpsLimit>0))hookMethod(d,16,(void*)platformCreateDevice);return d;
 }
 static bool d3d9DeviceTable(void** table,uintptr_t moduleBase,uintptr_t moduleEnd,void* present,void* reset) {
- if(!table||table[16]!=reset||table[17]!=present)return false;
+ void* methods[119]={};SIZE_T bytesRead=0;
+ if(!table||!ReadProcessMemory(GetCurrentProcess(),table,methods,sizeof(methods),&bytesRead)||bytesRead!=sizeof(methods))return false;
+ if(methods[16]!=reset||methods[17]!=present)return false;
  unsigned inImage=0;
- for(size_t i=0;i<119;i++){uintptr_t fn=(uintptr_t)table[i];if(fn>=moduleBase&&fn<moduleEnd)inImage++;}
+ for(size_t i=0;i<119;i++){uintptr_t fn=(uintptr_t)methods[i];if(fn>=moduleBase&&fn<moduleEnd)inImage++;}
  return inImage>=100;
 }
 static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTable) {
@@ -454,21 +456,34 @@ static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTab
  BYTE* base=(BYTE*)module;auto dos=(IMAGE_DOS_HEADER*)base;if(dos->e_magic!=IMAGE_DOS_SIGNATURE)return 0;
  auto nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);uintptr_t moduleBase=(uintptr_t)base,moduleEnd=moduleBase+nt->OptionalHeader.SizeOfImage;
  SYSTEM_INFO info={};GetSystemInfo(&info);uintptr_t address=(uintptr_t)info.lpMinimumApplicationAddress,maximum=(uintptr_t)info.lpMaximumApplicationAddress;
- unsigned hooked=0;void* firstTable=nullptr;
+ unsigned hooked=0;void* firstTable=nullptr;BYTE scanBuffer[64*1024];
  while(address<maximum){
   MEMORY_BASIC_INFORMATION region={};SIZE_T queried=VirtualQuery((void*)address,&region,sizeof(region));if(!queried)break;
   uintptr_t start=(uintptr_t)region.BaseAddress,end=start+region.RegionSize;
   DWORD protection=region.Protect&0xff;
   bool readable=protection==PAGE_READONLY||protection==PAGE_READWRITE||protection==PAGE_WRITECOPY||protection==PAGE_EXECUTE_READ||protection==PAGE_EXECUTE_READWRITE||protection==PAGE_EXECUTE_WRITECOPY;
   if(region.State==MEM_COMMIT&&region.Type==MEM_PRIVATE&&readable&&!(region.Protect&PAGE_GUARD)){
-   uintptr_t word=(start+sizeof(void*)-1)&~(uintptr_t)(sizeof(void*)-1);
-   for(;word+sizeof(void*)<=end;word+=sizeof(void*)){
-    if(*(void**)word!=present||word<start+17*sizeof(void*))continue;
-    void** table=(void**)(word-17*sizeof(void*));
-    if((uintptr_t)table+119*sizeof(void*)>end)continue;
-    if(table==probeTable||!d3d9DeviceTable(table,moduleBase,moduleEnd,present,reset))continue;
-    hookTable(table,17,(void*)platformPresent);hookTable(table,16,(void*)platformReset);
-    if(!firstTable)firstTable=table;hooked++;
+   uintptr_t cursor=(start+sizeof(void*)-1)&~(uintptr_t)(sizeof(void*)-1);
+   while(cursor+sizeof(void*)<=end){
+    SIZE_T chunkSize=(SIZE_T)(end-cursor);if(chunkSize>sizeof(scanBuffer))chunkSize=sizeof(scanBuffer);
+    chunkSize&=~(SIZE_T)(sizeof(void*)-1);if(!chunkSize)break;
+    SIZE_T bytesRead=0;
+    // VirtualQuery is only a snapshot; another thread can free or protect a
+    // heap region before the scan reaches it. Copy safely instead of reading
+    // the live address directly, so an ordinary allocation race cannot crash
+    // the game from this background D3D9 hook-discovery thread.
+    if(ReadProcessMemory(GetCurrentProcess(),(void*)cursor,scanBuffer,chunkSize,&bytesRead)&&bytesRead==chunkSize){
+     for(SIZE_T offset=0;offset+sizeof(void*)<=chunkSize;offset+=sizeof(void*)){
+      void* candidate=nullptr;memcpy(&candidate,scanBuffer+offset,sizeof(candidate));if(candidate!=present)continue;
+      uintptr_t word=cursor+offset;if(word<start+17*sizeof(void*))continue;
+      void** table=(void**)(word-17*sizeof(void*));
+      if((uintptr_t)table+119*sizeof(void*)>end)continue;
+      if(table==probeTable||!d3d9DeviceTable(table,moduleBase,moduleEnd,present,reset))continue;
+      hookTable(table,17,(void*)platformPresent);hookTable(table,16,(void*)platformReset);
+      if(!firstTable)firstTable=table;hooked++;
+     }
+   }
+    cursor+=chunkSize;
    }
   }
   if(end<=address)break;address=end;

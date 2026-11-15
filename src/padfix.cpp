@@ -136,7 +136,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",1,iniPath)!=0;
  platformConfigure();
- logf("MUSOUTweaksPC 2.18 platform-only x86 config=%s",iniPath);
+ logf("MUSOUTweaksPC 2.20 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -152,7 +152,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.18 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.20 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
