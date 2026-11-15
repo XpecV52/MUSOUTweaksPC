@@ -12,4 +12,4 @@
 各游戏目录的配置保留英文键名并附有中文注释，改动后重启游戏。战国无双2 使用 `SM2_Tweaks.ini`，真三3 使用 `SSM3_Tweaks.ini`，真三4 使用 `SSM4_Tweaks.ini`，真三7 使用 `SSM7_Tweaks.ini`。
 
 - `[padfix]`：`enable` 控制手柄适配；`backend` 选择自动/XInput/原生 DS4；`dpad_menu_navigation` 补充菜单十字键；`dpad_as_left_stick=-1` 自动只在真三3把十字键同步到左摇杆；`dpad_pov`、`left_deadzone`、`right_threshold`、`trigger_threshold`、`neutral_ms` 和 `ds4_right_x/y` 控制方向帽、摇杆、扳机、连接保护和 DS4 轴位。
-- `[platform]`：`window_mode` 开启无边框窗口；`render_width/height=0` 通常保留旧游戏自己的逻辑尺寸；`native_resolution=1` 让 DW8 使用显示器分辨率输出链，`scale_to_fill=1` 将原生逻辑画面铺满，`scale_filter=2` 使用清晰的 Catmull-Rom 缩放；`shared_input=1` 解除键鼠独占和光标限制，便于前台游戏运行时使用后台热键；`disable_game_ime`、`com_apartment_compat`、`close_without_confirmation` 分别控制游戏内输入法隔离、COM 兼容和关闭确认框。
+- `[platform]`：`window_mode` 开启无边框窗口；`render_width/height=0` 通常保留旧游戏自己的逻辑尺寸；`native_resolution=1` 让 真三7 使用显示器分辨率输出链，`scale_to_fill=1` 将原生逻辑画面铺满，`scale_filter=2` 使用清晰的 Catmull-Rom 缩放；`shared_input=1` 解除键鼠独占和光标限制，便于前台游戏运行时使用后台热键；`disable_game_ime`、`com_apartment_compat`、`close_without_confirmation` 分别控制游戏内输入法隔离、COM 兼容和关闭确认框。
