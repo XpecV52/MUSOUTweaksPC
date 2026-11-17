@@ -1,12 +1,12 @@
-# MUSOUTweaksPC 2.21 配置说明
+# MUSOUTweaksPC 2.42 配置说明
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
 
 | 游戏 | 配置文件 |
 |---|---|
 | 无双蛇魔 Z (`OROCHI_Z_TC.exe`) | `OrochiZPadX.ini` |
-| 真三国无双3 (`ShinSangokumusou3.exe`) | `SSM3_Tweaks.ini` |
-| 真三国无双4 (`SM4_WIN.exe`、`SS4*.exe`) | `SSM4_Tweaks.ini` |
+| 真三国无双3 / Dynasty Warriors 4: Hyper (`ShinSangokumusou3.exe`) | `SSM3_Tweaks.ini` |
+| 真三国无双4 Special / Dynasty Warriors 5 Special (`SM4_WIN.exe`、`SS4*.exe`) | `SSM4_Tweaks.ini` |
 | 真三国无双6 猛将传 DX (`SM6TC.exe`、`SM6EN.exe`、`SM6JP.exe`) | `SSM6_Tweaks.ini` |
 | 战国无双2 (`SW2.exe`) | `SM2_Tweaks.ini` |
 | 真三国无双7 / Dynasty Warriors 8 (`Launch.exe`) | `SSM7_Tweaks.ini` |
@@ -30,14 +30,16 @@
 | `backend` | `0` | 手柄来源：`0` 自动（优先 XInput，未找到时选择原生 Sony DS4）；`1` 只使用 XInput；`2` 只使用原生 Sony DS4。自动模式连接后保持当前来源，断开后再重新选择。|
 | `xinput_slot` | `-1` | XInput 手柄槽位。`-1` 自动选第一个在线槽位；`0`–`3` 固定使用对应槽位。指定槽位会优先于自动选择。|
 | `foreground_only` | `1` | 仅游戏位于前台时把手柄状态交给游戏。建议保持开启，以免切到桌面或其他程序时游戏仍接收手柄输入。|
-| `dpad_menu_navigation` | `1` | 将十字键加入游戏独立的菜单方向映射。`0` 关闭这项菜单补充；不会把十字键伪装成键盘方向键。|
-| `dpad_as_left_stick` | `-1` | `-1` 自动（真三国无双3开启，其他游戏关闭）；`1` 将十字键同步为左摇杆方向，`0` 关闭。真三6 DX 配置设为 `1`，因为该游戏菜单不响应 POV/按钮十字键；战斗中按住十字键时也会发送左摇杆方向。|
+| `dpad_menu_navigation` | `1` | 对已识别的游戏版本，将十字键加入独立菜单方向映射；未识别的版本会跳过菜单映射。不会把十字键伪装成键盘方向键。|
+| `dpad_as_left_stick` | `0` | `0` 保持十字键按钮/POV 与左摇杆轴独立；`1` 才额外同步方向到左摇杆轴。若游戏菜单只读左摇杆，关闭后菜单导航需由独立菜单映射补足。|
 | `left_deadzone` | `20` | 左摇杆死区百分比，范围 `0`–`90`。数值调低会更灵敏，也更容易受摇杆漂移影响；调高会减少漂移，但需要推得更远。|
 | `right_threshold` | `55` | 右摇杆触发数字方向按钮的阈值百分比，范围 `10`–`95`。降低会更容易触发视角方向，提高可减少轻推时误触。右摇杆映射为四个独立按钮，不是连续模拟轴。|
 | `trigger_threshold` | `40` | LT/RT 触发按钮的阈值，范围 `1`–`254`。数值较低时扳机轻压即可触发。|
 | `neutral_ms` | `250` | 手柄连接或游戏重新获得焦点后，要求所有按键松开、摇杆居中的保护时间，单位毫秒，范围 `0`–`5000`。设为 `0` 可关闭等待；建议保留默认值。|
 | `ds4_right_x` | `2` | 原生 DS4 右摇杆 X 轴索引，范围 `0`–`5`。索引依次为 X、Y、Z、Rx、Ry、Rz。|
 | `ds4_right_y` | `5` | 原生 DS4 右摇杆 Y 轴索引，范围 `0`–`5`。标准 DS4 默认使用 Z/Rz（`2`/`5`）。仅当特定原生 DS4 驱动的轴顺序不同时修改。|
+
+十字键始终作为独立 DirectInput 按钮提供：上/下/左/右对应 Button 13/14/15/16，并可另行暴露为 POV。`dpad_as_left_stick=0` 时它们不会进入左摇杆轴，因此不会驱动战斗移动；只有通过已识别的游戏菜单映射表，`dpad_menu_navigation=1` 才会额外控制菜单。6 DX 配置现已关闭左摇杆桥接；目前没有证据证明该游戏单独的菜单映射补丁已生效，因此菜单光标需后续实机确认。
 
 当前适配只向游戏呈现一个虚拟手柄；双人双手柄、DualSense、DS4 仿制品以及其他 DirectInput 设备未适配。使用 DS4Windows 等工具将 DS4 转成 Xbox/XInput 时，应选择 `backend=1` 或保持自动模式，而不是 `backend=2`。
 
@@ -49,11 +51,16 @@
 |---|---:|---|
 | `shared_input` | `1` | 将游戏键盘/鼠标输入从独占改为非独占，并取消鼠标限制。开启后，游戏处于前台时，后台注册的全局快捷键应用也可以响应；不会把游戏按键广播到任意后台文本框。设为 `0` 可恢复游戏原有的独占输入请求。|
 | `window_mode` | `1` | `1` 使用主显示器原生分辨率的无边框全屏窗口；`0` 保留游戏原本的显示模式和窗口行为。|
-| `render_width` | `0` | 无边框模式下的渲染宽度（像素）。蛇魔 Z 中 `0` 自动采用主显示器宽度；其他游戏中 `0` 保留游戏画面尺寸。自定义值为 `640`–`8192`。|
-| `render_height` | `0` | 无边框模式下的渲染高度（像素）。蛇魔 Z 中 `0` 自动采用主显示器高度；其他游戏中 `0` 保留游戏画面尺寸。自定义值为 `360`–`8192`。|
-| `native_resolution` | `0` | `1` 让 D3D9 输出链使用游戏所在显示器分辨率；`0` 保持游戏所选缓冲区尺寸。DW8 和真三6 DX 的全屏配置默认启用。|
-| `scale_to_fill` | `0` | `1` 把游戏逻辑渲染区域缩放铺满原生输出链；`0` 不进行铺满缩放。DW8 和真三6 DX 都使用输出链缩放。|
-| `scale_filter` | `2` | 缩放滤镜：`0` 点采样；`1` 线性滤镜；`2` Catmull-Rom 立方重建，兼顾边缘清晰度与平滑度。仅在 `scale_to_fill=1` 时使用。|
+| `render_width` | `0` | 无边框模式下的渲染宽度（像素）。`0` 自动采用目标显示器桌面宽度；自定义值为 `640`–`8192`。真三3 / DW4 Hyper 与真三4 / DW5 Special 会拒绝自定义渲染尺寸，保持游戏自身分辨率。|
+| `render_height` | `0` | 无边框模式下的渲染高度（像素）。`0` 自动采用目标显示器桌面高度；自定义值为 `360`–`8192`。真三3 / DW4 Hyper 与真三4 / DW5 Special 会拒绝自定义渲染尺寸，保持游戏自身分辨率。|
+| `native_resolution` | `0` | `1` 使用游戏所在显示器桌面尺寸作为无边框后备缓冲区；`0` 保持游戏所选缓冲区尺寸。真三3 / DW4 Hyper 与真三4 / DW5 Special 会强制保持游戏自身缓冲区（该项被忽略），避免高分辨率路径导致菜单、片头与战场坐标错位或黑屏。|
+| `single_present` | `1` | 每帧只通过游戏主交换链提交一次，避免额外输出链让 Steam/RTSS 重复统计帧数，并保留游戏亮度与覆盖层路径。设为 `0` 可恢复单独的桌面输出交换链。显式高于桌面的缓冲区仍保留高分辨率渲染。|
+| `scale_to_fill` | `0` | `1` 对已完成画面执行补丁缩放；`0` 关闭后处理缩放。真三3 / DW4 Hyper 与真三4 / DW5 Special 不参与补丁缩放，画面由无边框窗口自身拉伸到桌面。|
+| `scale_aspect_mode` | `0` | 仅在补丁自定义缩放时生效。`0` 拉伸完整画面；`1` 等比居中并以柔化背景填充。真三3、真三4 不使用该项。|
+| `scale_filter` | `2` | 缩放滤镜：`0` 点采样；`1` 线性滤镜；`2` Catmull-Rom 立方重建，兼顾边缘清晰度与平滑度。用于 D3D9 主交换链缩放。|
+| `internal_render_width` / `internal_render_height` | 按游戏配置 | 蛇魔Z、真三7、SW2 各自的专用补丁读取此项；真三3 / DW4 Hyper 与真三4 / DW5 Special 会拒绝非零值并回落到游戏自身分辨率。|
+| `sw2_fix_hud` | `1` | SW2 专用分辨率补丁的 HUD/菜单坐标校正。`1` 开启，`0` 关闭。|
+| `sw2_camera_mode` | `0` | SW2 镜头比例实验选项：`0` 保持游戏原镜头代码；`1`/`2` 选择两种备用比例路径。上游说明目标可能命中副镜头，未单独验证前建议保持 `0`。|
 | `disable_game_ime` | `1` | 隔离游戏进程内的输入法上下文，绕过中文 IME 参与游戏初始化时出现的启动崩溃。不会切换系统输入法，也不支持在游戏内部输入中文。设为 `0` 可恢复游戏原有 IME 行为。|
 | `com_apartment_compat` | `1` | 兼容游戏初始化时遇到的 COM apartment 模式冲突。修复只针对已确认的游戏调用点和 `RPC_E_CHANGED_MODE`；其他 COM 错误不会被忽略。建议保持开启。|
 | `close_without_confirmation` | `1` | 关闭游戏窗口时绕过游戏的关闭确认框，并继续走游戏正常销毁/退出流程。设为 `0` 可恢复原确认框。|
@@ -68,7 +75,11 @@ render_width=1920
 render_height=1080
 ```
 
-`render_width` 和 `render_height` 可分别设为 `0`。蛇魔 Z 此时采用主显示器尺寸并由已验证的游戏专用分辨率钩子更新内部尺寸；其他旧游戏保留引擎当前画面尺寸。DW8 和真三6 DX 使用独立 D3D9 输出链，将游戏逻辑画面用 `scale_filter` 指定的滤镜铺满显示器。`scale_filter=2` 使用 Catmull-Rom 重建，避免普通线性插值带来的额外柔化。显卡或显存无法创建目标尺寸时，游戏仍会返回真实的 Direct3D 错误。不同宽高比与 HUD 排列仍需逐项验收。
+`render_width` 和 `render_height` 可分别设为 `0`。蛇魔 Z 与 SW2 使用各自的游戏专用分辨率钩子。真三3 / DW4 Hyper 与真三4 / DW5 Special 不做任何分辨率覆写：两作以游戏自身 1280×960 后备缓冲区渲染，只由无边框窗口把画面放大到桌面，`window_mode`、手柄、输入法、共享输入与关闭确认等功能保持有效。这两作的引擎把界面与场景坐标绑在所选显示模式上，扩大后备缓冲区会裁切画面、错位菜单，真三4 还会黑屏，因此补丁在日志中记录 `legacy resolution override refused` 并忽略 `render_width` / `render_height` / `native_resolution` / `scale_to_fill` / `internal_render_*`。
+
+## 蛇魔 Z 独立内部分辨率
+
+`OrochiZPadX.ini` 的 `internal_render_width=3840`、`internal_render_height=2160` 让已核验的蛇魔 Z 引擎宽高查询和运行时宽高变量使用 4K，由游戏主交换链呈现到桌面。这是对真三6 DX 分辨率 MOD 配置驱动宽高行为的游戏专用移植；蛇魔 Z 使用自己的查询函数和运行时尺寸变量，不套用 SM6TC 的地址。蛇魔 Z 使用主交换链输出，并修正高于2048像素时 GS 精灵坐标的回绕，避免4K菜单背景消失；仅对已识别的全屏背景四边形临时关闭深度写入并在绘制后还原；地图、模型和其他界面保留深度测试，避免准备地图被遮挡，同时处理加载与结算界面的背景遮挡。两项同时设为 `0` 恢复原先 `render_width` / `render_height` 逻辑。显示器分辨率和刷新率不变；更高渲染尺寸会增加 GPU 与显存负担。
 
 ## 真三6 DX 额外补丁
 
@@ -133,3 +144,21 @@ close_without_confirmation=0
 4. 若需恢复原版本，先退出游戏，再运行项目包中的 `restore.ps1` 并指定安装时生成的 `MUSOUTweaksPC-backup-时间戳` 备份目录。
 
 配置文件无法修复不受支持的游戏 EXE 指纹；修改 DLL、EXE 或菜单映射代码并非普通配置操作。出现问题时先恢复默认 INI，并查看同目录 `MUSOUTweaksPC.log`。
+
+### 真三7镜头远近
+
+`SSM7_Tweaks.ini` 的 `[platform]` 新增 `camera_distance_percent=100`。随附配置设为 `125`。范围 `50` 到 `300`；`100` 保持原始镜头，`125` 稍微拉远，`150` 进一步拉远。此项沿原视线移动 3D 视点，保持 FOV、人物比例和 HUD 尺寸。游戏运行中保存配置，约半秒后读取；移动角色或转动视角时更新缓存的镜头。过大的倍率可能退入墙后，原生镜头避障距离不会同步扩展。
+
+Camera distance uses `camera_distance_percent` (50–300, default 100). It moves the 3D viewpoint without changing the lens or HUD. Settings reload within 500 ms; move the character/camera to refresh cached views. Large values may move behind walls.
+
+镜头快捷键默认开启（`camera_hotkeys=1`），仅在游戏前台响应：`Ctrl+Alt+PageUp` 拉远、`Ctrl+Alt+PageDown` 拉近、`Ctrl+Alt+Home` 恢复 `100`。`camera_distance_step=5` 表示每次变化 5 个百分点；按住可连续调整，结果自动保存到 `camera_distance_percent`。
+
+`camera_hotkey_modifiers` 为修饰键位掩码：Ctrl=`1`、Alt=`2`、Shift=`4`，相加组合，默认 `3`；`0` 不要求修饰键。`camera_hotkey_farther` / `camera_hotkey_nearer` / `camera_hotkey_reset` 使用十进制 Windows 虚拟键码，默认 `33`（PageUp）、`34`（PageDown）、`36`（Home）；对应设为 `0` 禁用该动作。上述选项也支持运行中修改。
+
+Camera shortcuts work only in the game foreground. Ctrl+Alt+PageUp/PageDown moves farther/nearer; Ctrl+Alt+Home resets to 100. Hold to repeat; each step defaults to 5 percentage points. Changes persist to the INI. Modifier bits are Ctrl=1, Alt=2, Shift=4; key options use Windows virtual-key codes, with 0 disabling the action.
+
+### 蛇魔Z战斗镜头
+
+`OrochiZPadX.ini` 的 `[platform]` 支持与真三7相同的 `camera_distance_percent`、`camera_hotkeys`、`camera_distance_step` 和快捷键配置，默认镜头为 `125`。仅调整玩家战斗镜头，CPU 投影与 PC 绘制镜头同步修改，准备／军团情报地图不参与缩放。快捷键为 Ctrl+Alt+PageUp 拉远、Ctrl+Alt+PageDown 拉近、Ctrl+Alt+Home 恢复原始距离，调整结果自动保存。
+
+Orochi Z shares the camera configuration and foreground shortcuts with SSM7. Only player battle views are adjusted; CPU projection and renderer cameras use the same temporary viewpoint, while preparation maps retain their own framing.

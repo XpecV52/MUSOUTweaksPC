@@ -17,5 +17,7 @@ call "%VCVARS%"
 if errorlevel 1 exit /b 1
 cd /d "%~dp0"
 if not exist build mkdir build
-cl /nologo /std:c++17 /EHsc /W4 /O2 /MT /utf-8 /LD src\padfix.cpp /Fobuild\padfix.obj /link /DEF:src\dinput8.def /OUT:build\dinput8.dll user32.lib dxguid.lib dinput8.lib
+cl /nologo /std:c11 /TC /O2 /MT /utf-8 /c src\sw2resolution\sw2_resolution.c /Fobuild\sw2_resolution.obj
+if errorlevel 1 exit /b 1
+cl /nologo /std:c++17 /EHsc /W4 /O2 /MT /utf-8 /LD src\padfix.cpp build\sw2_resolution.obj /Fobuild\padfix.obj /link /DEF:src\dinput8.def /OUT:build\dinput8.dll user32.lib dxguid.lib dinput8.lib
 if errorlevel 1 exit /b 1

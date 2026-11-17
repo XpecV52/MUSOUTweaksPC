@@ -7,14 +7,48 @@
 #include <unordered_set>
 #include <cwchar>
 #include <cctype>
+#ifndef PADFIX_PLATFORM_ONLY
+extern "C" void sw2ResolutionInitialize(void);
+#endif
 static void initializeAll();
 static void attachExistingMainWindow();
 static int sharedInput=1,windowMode=1,imeIsolation=1,comCompatibility=1,quickClose=1;
 static int fpsLimit=0;
 static int renderWidth=0,renderHeight=0;
+static int internalRenderWidth=0,internalRenderHeight=0;
+static bool singlePresentMode=true;
+static bool ssm7ResolutionPatched=false,cameraTweakActive=false;
+static void patchSsm7Resolution();
+static void patchSsm7Camera();
+static void patchOrochiCamera();
+static void pollCameraHotkeys();
 static bool nativeResolution=false,scaleToFill=false;
+// A third-party overlay (Steam's gameoverlayrenderer, RTSS) can re-wrap the
+// device table around our hooks, so the wrapper chain may call us again while
+// we are already inside the same hook. Without a guard that becomes unbounded
+// recursion and ends as a 0xC00000FD stack overflow inside the game.
+static __declspec(thread) int presentReentry=0;
+static __declspec(thread) int resetReentry=0;
+static __declspec(thread) int drawReentry=0;
+static __declspec(thread) int createReentry=0;
+struct ReentryGuard {
+ int& depth;
+ explicit ReentryGuard(int& d):depth(d){++depth;}
+ ~ReentryGuard(){--depth;}
+};
+static void reportReentry(const char* name) {
+ static volatile LONG presentLogged=0,resetLogged=0,drawLogged=0,createLogged=0;
+ volatile LONG* flag=&drawLogged;
+ if(!strcmp(name,"Present"))flag=&presentLogged;
+ else if(!strcmp(name,"Reset"))flag=&resetLogged;
+ else if(!strcmp(name,"CreateDevice"))flag=&createLogged;
+ if(InterlockedCompareExchange(flag,1,0)==0)logf("D3D hook re-entry blocked for %s: an overlay re-wrapped the device table",name);
+}
+// 0=stretch the complete logical frame; 1=preserve it centered over a stretched full-screen backdrop.
+static int scaleAspectMode=0;
 // 0=point, 1=linear, 2=Catmull-Rom cubic reconstruction.
 static int scaleFilter=2;
+static char gameExeName[MAX_PATH];
 static HWND gameWindow;
 static WNDPROC gameWindowProc;
 static RECT monitorBounds;
@@ -24,10 +58,18 @@ static bool graphicsPatched=false;
 static bool forceNativeBuffer=false;
 static bool deferGetProcHook=false;
 static bool lateD3DHookAttempted=false;
-static char gameExeName[MAX_PATH];
 static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int height);
 static bool isSsm6DxExecutable(const char* name) {
  return !_stricmp(name,"SM6TC.exe")||!_stricmp(name,"SM6EN.exe")||!_stricmp(name,"SM6JP.exe");
+}
+static bool isLegacyHighResolutionExecutable(const char* name) {
+ return !_stricmp(name,"ShinSangokumusou3.exe")||!_stricmp(name,"SM4_WIN.exe")||!_stricmp(name,"SS4.exe")||
+  !_stricmp(name,"SS4_Plus.exe")||!_stricmp(name,"SS4_Super.exe")||!_stricmp(name,"SS4_Ultima.exe");
+}
+static bool legacyInternalResolutionEnabled() {
+ // These builds need their own engine-resolution, projection and UI patch.
+ // A D3D9-only backbuffer override was observed to crop the scene, so refuse it.
+ return false;
 }
 static decltype(&CreateWindowExA) realCreateWindow;
 static decltype(&CreateWindowExW) realCreateWindowW;
@@ -43,13 +85,14 @@ static IDirect3D9* (WINAPI* realCreateD3D)(UINT);
 static FARPROC (WINAPI* realGetProcAddress)(HMODULE,LPCSTR);
 static BOOL (WINAPI* disableIme)(DWORD);
 static BOOL (WINAPI* associateIme)(HWND,HIMC,DWORD);
-struct TableHook {void* release;std::unordered_map<size_t,void*> methods;};
+struct TableHook {void* release=nullptr;void* query=nullptr;void* addRef=nullptr;std::unordered_map<size_t,void*> methods;std::unordered_map<size_t,void*> hooks;};
 static std::mutex tableMutex;
 static std::unordered_map<void*,TableHook> tables;
 static std::unordered_set<void*> renderDevices;
 static std::unordered_map<void*,std::pair<UINT,UINT>> logicalRenderSizes;
 static std::unordered_map<void*,std::pair<UINT,UINT>> loggedNativeViewports,loggedNativeScissors;
 static std::unordered_map<void*,IDirect3DSurface9*> scaleSurfaces;
+static std::unordered_map<void*,IDirect3DSurface9*> aspectBackdropSurfaces;
 static std::unordered_map<void*,IDirect3DSwapChain9*> nativeOutputChains;
 struct NativeScaleSize {UINT width,height;D3DFORMAT format;};
 static std::unordered_map<void*,IDirect3DTexture9*> nativeScaleTextures;
@@ -58,11 +101,23 @@ static std::unordered_map<void*,NativeScaleSize> nativeScaleSizes;
 static std::unordered_set<void*> nativeScaleFailed;
 static std::unordered_set<void*> nativeOutputDevices,loggedNativeOutputDevices,loggedNativeOutputFailures;
 static std::unordered_set<void*> loggedScaleDevices,loggedScaleFailures;
+static std::unordered_set<void*> loggedPrimaryPresentParameters;
 static void* originalMethod(void* object,size_t index) {
- std::lock_guard<std::mutex> lock(tableMutex);auto i=tables.find(*(void***)object);
- if(i==tables.end())return nullptr;
- if(index==2)return i->second.release;
- auto method=i->second.methods.find(index);return method==i->second.methods.end()?nullptr:method->second;
+ void** table=*(void***)object;
+ std::lock_guard<std::mutex> lock(tableMutex);auto i=tables.find(table);
+ if(i!=tables.end()){
+  if(index==2&&i->second.release)return i->second.release;
+  auto method=i->second.methods.find(index);if(method!=i->second.methods.end())return method->second;
+ }
+ // A third-party private-table copy can invoke an inherited wrapper before
+ // CreateDevice/Reset has had a chance to register that copied table.
+ for(const auto& known:tables){
+  const auto& candidate=known.second;
+  if(candidate.query!=table[0]||candidate.addRef!=table[1])continue;
+  if(index==2&&candidate.release)return candidate.release;
+  auto method=candidate.methods.find(index);if(method!=candidate.methods.end())return method->second;
+ }
+ return nullptr;
 }
 static D3DTEXTUREFILTERTYPE standardScaleFilter() {return scaleFilter==0?D3DTEXF_POINT:D3DTEXF_LINEAR;}
 static void getNativeDisplaySize(UINT& width,UINT& height) {
@@ -81,7 +136,11 @@ static void getNativeDisplaySize(UINT& width,UINT& height) {
 }
 static bool needsNativeOutputChain(const D3DPRESENT_PARAMETERS& p) {
  bool target=!_stricmp(gameExeName,"Launch.exe")||isSsm6DxExecutable(gameExeName);
- return nativeResolution&&scaleToFill&&target&&gameWindow&&p.hDeviceWindow==gameWindow;
+ // A second swap chain is shown as another present by Steam/RTSS overlays and
+ // can miss the game's gamma ramp. Keep one present per frame and scale the
+ // completed logical frame into the primary backbuffer instead.
+ if(singlePresentMode&&target)return false;
+ return ((nativeResolution&&scaleToFill&&target)||legacyInternalResolutionEnabled())&&gameWindow&&p.hDeviceWindow==gameWindow;
 }
 static void releaseNativeScaler(void* device) {
  IDirect3DTexture9* texture=nullptr;IDirect3DPixelShader9* shader=nullptr;
@@ -129,18 +188,18 @@ static void disableNativeCubicScaler(void* device,const char* stage,HRESULT hr) 
  bool first=false;{std::lock_guard<std::mutex> lock(tableMutex);first=nativeScaleFailed.insert(device).second;}
  if(first)logf("D3D cubic scaler disabled stage=%s hr=%08lx; using linear fallback",stage,hr);
 }
-static bool acquireNativeScaleResources(IDirect3DDevice9* device,const D3DSURFACE_DESC& source,IDirect3DTexture9** textureOut,IDirect3DPixelShader9** shaderOut) {
+static bool acquireNativeScaleResources(IDirect3DDevice9* device,UINT sourceWidth,UINT sourceHeight,D3DFORMAT sourceFormat,IDirect3DTexture9** textureOut,IDirect3DPixelShader9** shaderOut) {
  if(!device||!textureOut||!shaderOut)return false;*textureOut=nullptr;*shaderOut=nullptr;
  std::lock_guard<std::mutex> lock(tableMutex);
  if(nativeScaleFailed.count(device))return false;
  auto size=nativeScaleSizes.find(device);auto texture=nativeScaleTextures.find(device);
- if(texture!=nativeScaleTextures.end()&&(size==nativeScaleSizes.end()||size->second.width!=source.Width||size->second.height!=source.Height||size->second.format!=source.Format)){
+ if(texture!=nativeScaleTextures.end()&&(size==nativeScaleSizes.end()||size->second.width!=sourceWidth||size->second.height!=sourceHeight||size->second.format!=sourceFormat)){
   texture->second->Release();nativeScaleTextures.erase(texture);nativeScaleSizes.erase(device);texture=nativeScaleTextures.end();
  }
  if(texture==nativeScaleTextures.end()){
-  IDirect3DTexture9* created=nullptr;HRESULT hr=device->CreateTexture(source.Width,source.Height,1,D3DUSAGE_RENDERTARGET,source.Format,D3DPOOL_DEFAULT,&created,nullptr);
-  if(FAILED(hr)||!created){nativeScaleFailed.insert(device);logf("D3D cubic source texture creation failed size=%ux%u format=%u hr=%08lx",source.Width,source.Height,source.Format,hr);return false;}
-  nativeScaleTextures[device]=created;nativeScaleSizes[device]={source.Width,source.Height,source.Format};texture=nativeScaleTextures.find(device);
+  IDirect3DTexture9* created=nullptr;HRESULT hr=device->CreateTexture(sourceWidth,sourceHeight,1,D3DUSAGE_RENDERTARGET,sourceFormat,D3DPOOL_DEFAULT,&created,nullptr);
+  if(FAILED(hr)||!created){nativeScaleFailed.insert(device);logf("D3D cubic source texture creation failed size=%ux%u format=%u hr=%08lx",sourceWidth,sourceHeight,sourceFormat,hr);return false;}
+  nativeScaleTextures[device]=created;nativeScaleSizes[device]={sourceWidth,sourceHeight,sourceFormat};texture=nativeScaleTextures.find(device);
  }
  auto shader=nativeScaleShaders.find(device);
  if(shader==nativeScaleShaders.end()){
@@ -149,12 +208,17 @@ static bool acquireNativeScaleResources(IDirect3DDevice9* device,const D3DSURFAC
  }
  *textureOut=texture->second;(*textureOut)->AddRef();*shaderOut=shader->second;(*shaderOut)->AddRef();return true;
 }
-static bool cubicScaleToOutput(IDirect3DDevice9* device,IDirect3DSurface9* source,IDirect3DSurface9* output) {
+static bool cubicScaleToOutput(IDirect3DDevice9* device,IDirect3DSurface9* source,IDirect3DSurface9* output,const RECT* sourceRect=nullptr,const RECT* destinationRect=nullptr) {
  D3DSURFACE_DESC src={},dst={};if(FAILED(source->GetDesc(&src))||FAILED(output->GetDesc(&dst))||!src.Width||!src.Height||!dst.Width||!dst.Height)return false;
+ RECT crop={0,0,(LONG)src.Width,(LONG)src.Height};if(sourceRect)crop=*sourceRect;
+ if(crop.left<0||crop.top<0||crop.right>(LONG)src.Width||crop.bottom>(LONG)src.Height||crop.right<=crop.left||crop.bottom<=crop.top)return false;
+ RECT target={0,0,(LONG)dst.Width,(LONG)dst.Height};if(destinationRect)target=*destinationRect;
+ if(target.left<0||target.top<0||target.right>(LONG)dst.Width||target.bottom>(LONG)dst.Height||target.right<=target.left||target.bottom<=target.top)return false;
+ UINT sourceWidth=(UINT)(crop.right-crop.left),sourceHeight=(UINT)(crop.bottom-crop.top);
  IDirect3DTexture9* texture=nullptr;IDirect3DPixelShader9* shader=nullptr;
- if(!acquireNativeScaleResources(device,src,&texture,&shader))return false;
+ if(!acquireNativeScaleResources(device,sourceWidth,sourceHeight,src.Format,&texture,&shader))return false;
  IDirect3DSurface9* textureSurface=nullptr;HRESULT copyHr=texture->GetSurfaceLevel(0,&textureSurface);
- if(SUCCEEDED(copyHr))copyHr=device->StretchRect(source,nullptr,textureSurface,nullptr,D3DTEXF_NONE);
+ if(SUCCEEDED(copyHr))copyHr=device->StretchRect(source,&crop,textureSurface,nullptr,D3DTEXF_NONE);
  if(textureSurface)textureSurface->Release();
  if(FAILED(copyHr)){disableNativeCubicScaler(device,"source copy",copyHr);texture->Release();shader->Release();return false;}
  IDirect3DStateBlock9* states=nullptr;HRESULT stateHr=device->CreateStateBlock(D3DSBT_ALL,&states);
@@ -176,15 +240,15 @@ static bool cubicScaleToOutput(IDirect3DDevice9* device,IDirect3DSurface9* sourc
  if(SUCCEEDED(drawHr)){drawHr=device->SetFVF(D3DFVF_XYZRHW|D3DFVF_TEX1);if(FAILED(drawHr))failedStage="SetFVF";}
  if(SUCCEEDED(drawHr)){drawHr=device->SetTexture(0,texture);if(FAILED(drawHr))failedStage="SetTexture";}
  if(SUCCEEDED(drawHr)){
-  float size[4]={(float)src.Width,(float)src.Height,0.0f,0.0f};
-  float inverse[4]={1.0f/(float)src.Width,1.0f/(float)src.Height,0.0f,0.0f};
+  float size[4]={(float)sourceWidth,(float)sourceHeight,0.0f,0.0f};
+  float inverse[4]={1.0f/(float)sourceWidth,1.0f/(float)sourceHeight,0.0f,0.0f};
   drawHr=device->SetPixelShaderConstantF(0,size,1);if(FAILED(drawHr))failedStage="SetPixelShaderConstantF0";if(SUCCEEDED(drawHr)){drawHr=device->SetPixelShaderConstantF(1,inverse,1);if(FAILED(drawHr))failedStage="SetPixelShaderConstantF1";}
  }
  if(SUCCEEDED(drawHr)){
   device->SetRenderState(D3DRS_ZENABLE,FALSE);device->SetRenderState(D3DRS_ZWRITEENABLE,FALSE);device->SetRenderState(D3DRS_ALPHABLENDENABLE,FALSE);device->SetRenderState(D3DRS_ALPHATESTENABLE,FALSE);device->SetRenderState(D3DRS_CULLMODE,D3DCULL_NONE);device->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE);device->SetRenderState(D3DRS_SRGBWRITEENABLE,FALSE);device->SetRenderState(D3DRS_COLORWRITEENABLE,D3DCOLORWRITEENABLE_RED|D3DCOLORWRITEENABLE_GREEN|D3DCOLORWRITEENABLE_BLUE|D3DCOLORWRITEENABLE_ALPHA);
   device->SetSamplerState(0,D3DSAMP_MINFILTER,D3DTEXF_POINT);device->SetSamplerState(0,D3DSAMP_MAGFILTER,D3DTEXF_POINT);device->SetSamplerState(0,D3DSAMP_MIPFILTER,D3DTEXF_NONE);device->SetSamplerState(0,D3DSAMP_ADDRESSU,D3DTADDRESS_CLAMP);device->SetSamplerState(0,D3DSAMP_ADDRESSV,D3DTADDRESS_CLAMP);device->SetSamplerState(0,D3DSAMP_SRGBTEXTURE,FALSE);
-  struct Vertex {float x,y,z,rhw,u,v;};float right=(float)dst.Width-0.5f,bottom=(float)dst.Height-0.5f;
-  Vertex quad[4]={{-0.5f,-0.5f,0.0f,1.0f,0.0f,0.0f},{right,-0.5f,0.0f,1.0f,1.0f,0.0f},{-0.5f,bottom,0.0f,1.0f,0.0f,1.0f},{right,bottom,0.0f,1.0f,1.0f,1.0f}};
+  struct Vertex {float x,y,z,rhw,u,v;};float left=(float)target.left-0.5f,top=(float)target.top-0.5f,right=(float)target.right-0.5f,bottom=(float)target.bottom-0.5f;
+  Vertex quad[4]={{left,top,0.0f,1.0f,0.0f,0.0f},{right,top,0.0f,1.0f,1.0f,0.0f},{left,bottom,0.0f,1.0f,0.0f,1.0f},{right,bottom,0.0f,1.0f,1.0f,1.0f}};
   drawHr=device->BeginScene();if(FAILED(drawHr))failedStage="BeginScene";
   if(SUCCEEDED(drawHr)){drawHr=device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP,2,quad,sizeof(Vertex));if(FAILED(drawHr))failedStage="DrawPrimitiveUP";HRESULT endHr=device->EndScene();if(SUCCEEDED(drawHr)&&FAILED(endHr)){drawHr=endHr;failedStage="EndScene";}}
  }
@@ -224,13 +288,13 @@ static bool createNativeOutputChain(IDirect3DDevice9* device) {
  return true;
 }
 static void releaseScaleSurface(void* object) {
- IDirect3DSurface9* surface=nullptr;
- {std::lock_guard<std::mutex> lock(tableMutex);auto i=scaleSurfaces.find(object);if(i!=scaleSurfaces.end()){surface=i->second;scaleSurfaces.erase(i);}loggedScaleDevices.erase(object);loggedScaleFailures.erase(object);}
- if(surface)surface->Release();
+ IDirect3DSurface9* surface=nullptr;IDirect3DSurface9* backdrop=nullptr;
+ {std::lock_guard<std::mutex> lock(tableMutex);auto i=scaleSurfaces.find(object);if(i!=scaleSurfaces.end()){surface=i->second;scaleSurfaces.erase(i);}auto b=aspectBackdropSurfaces.find(object);if(b!=aspectBackdropSurfaces.end()){backdrop=b->second;aspectBackdropSurfaces.erase(b);}loggedScaleDevices.erase(object);loggedScaleFailures.erase(object);}
+ if(surface)surface->Release();if(backdrop)backdrop->Release();
 }
 static void releaseAllScaleSurfaces() {
  std::vector<IDirect3DSurface9*> surfaces;
- {std::lock_guard<std::mutex> lock(tableMutex);for(auto& item:scaleSurfaces)surfaces.push_back(item.second);scaleSurfaces.clear();loggedScaleDevices.clear();loggedScaleFailures.clear();}
+ {std::lock_guard<std::mutex> lock(tableMutex);for(auto& item:scaleSurfaces)surfaces.push_back(item.second);for(auto& item:aspectBackdropSurfaces)surfaces.push_back(item.second);scaleSurfaces.clear();aspectBackdropSurfaces.clear();loggedScaleDevices.clear();loggedScaleFailures.clear();}
  for(auto* surface:surfaces)if(surface)surface->Release();
 }
 static IDirect3DSurface9* acquireScaleSurface(IDirect3DDevice9* d,UINT width,UINT height,D3DFORMAT format) {
@@ -244,22 +308,65 @@ static IDirect3DSurface9* acquireScaleSurface(IDirect3DDevice9* d,UINT width,UIN
  if(result!=created)created->Release();
  return result;
 }
-static void scaleBackbufferToNative(IDirect3DDevice9* d,const RECT* source,const RECT* destination) {
- if(!nativeResolution||!scaleToFill||source||destination)return;
+static IDirect3DSurface9* acquireAspectBackdropSurface(IDirect3DDevice9* d,UINT width,UINT height,D3DFORMAT format) {
+ IDirect3DSurface9* cached=nullptr;
+ {std::lock_guard<std::mutex> lock(tableMutex);auto i=aspectBackdropSurfaces.find(d);if(i!=aspectBackdropSurfaces.end()){cached=i->second;cached->AddRef();}}
+ if(cached){D3DSURFACE_DESC desc={};if(SUCCEEDED(cached->GetDesc(&desc))&&desc.Width==width&&desc.Height==height&&desc.Format==format)return cached;cached->Release();IDirect3DSurface9* stale=nullptr;{std::lock_guard<std::mutex> lock(tableMutex);auto i=aspectBackdropSurfaces.find(d);if(i!=aspectBackdropSurfaces.end()){stale=i->second;aspectBackdropSurfaces.erase(i);}}if(stale)stale->Release();}
+ IDirect3DSurface9* created=nullptr;HRESULT hr=d->CreateRenderTarget(width,height,format,D3DMULTISAMPLE_NONE,0,FALSE,&created,nullptr);
+ if(FAILED(hr)||!created)return nullptr;
+ IDirect3DSurface9* result=created;
+ {std::lock_guard<std::mutex> lock(tableMutex);auto i=aspectBackdropSurfaces.find(d);if(i==aspectBackdropSurfaces.end()){created->AddRef();aspectBackdropSurfaces[d]=created;}else{i->second->AddRef();result=i->second;}}
+ if(result!=created)created->Release();
+ return result;
+}
+static HRESULT drawAspectBackdrop(IDirect3DDevice9* device,IDirect3DSurface9* source,IDirect3DSurface9* output,UINT sourceW,UINT sourceH,D3DFORMAT format) {
+ // Downsample once into a cached low-resolution surface, then stretch the
+ // softened whole frame to fill the canvas behind the aspect-correct image.
+ UINT blurW=std::max<UINT>(64,sourceW/6),blurH=std::max<UINT>(64,sourceH/6);
+ IDirect3DSurface9* blur=acquireAspectBackdropSurface(device,blurW,blurH,format);
+ if(!blur)return device->StretchRect(source,nullptr,output,nullptr,D3DTEXF_LINEAR);
+ HRESULT hr=device->StretchRect(source,nullptr,blur,nullptr,D3DTEXF_LINEAR);
+ if(SUCCEEDED(hr))hr=device->StretchRect(blur,nullptr,output,nullptr,D3DTEXF_LINEAR);
+ blur->Release();return hr;
+}
+static bool scaleBackbufferToNative(IDirect3DDevice9* d,const RECT* source,const RECT* destination) {
+ if(!nativeResolution||!scaleToFill)return false;
  UINT logicalW=0,logicalH=0;{std::lock_guard<std::mutex> lock(tableMutex);auto i=logicalRenderSizes.find(d);if(i!=logicalRenderSizes.end()){logicalW=i->second.first;logicalH=i->second.second;}}
- if(!logicalW||!logicalH)return;
- IDirect3DSurface9* back=nullptr;if(FAILED(d->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back))||!back)return;
+ IDirect3DSurface9* back=nullptr;if(FAILED(d->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back))||!back)return false;
  D3DSURFACE_DESC desc={};HRESULT descHr=back->GetDesc(&desc);
- if(FAILED(descHr)||desc.Width<=logicalW||desc.Height<=logicalH){back->Release();return;}
- IDirect3DSurface9* temp=acquireScaleSurface(d,logicalW,logicalH,desc.Format);
- if(!temp){back->Release();return;}
- RECT crop={0,0,(LONG)logicalW,(LONG)logicalH};
- HRESULT copyHr=d->StretchRect(back,&crop,temp,nullptr,D3DTEXF_NONE);
- HRESULT scaleHr=FAILED(copyHr)?copyHr:d->StretchRect(temp,nullptr,back,nullptr,standardScaleFilter());
+ if(FAILED(descHr)||!desc.Width||!desc.Height){back->Release();return false;}
+ RECT crop={0,0,(LONG)desc.Width,(LONG)desc.Height};
+ bool sourceValid=source&&source->left>=0&&source->top>=0&&source->right<=(LONG)desc.Width&&source->bottom<=(LONG)desc.Height&&source->right>source->left&&source->bottom>source->top;
+ // Respect an explicit smaller source rectangle. A full-backbuffer Present
+ // rectangle does not describe the game's logical viewport, so prefer the
+ // tracked viewport size in that case.
+ if(sourceValid&&((UINT)(source->right-source->left)<desc.Width||(UINT)(source->bottom-source->top)<desc.Height))crop=*source;
+ else if(logicalW&&logicalH&&logicalW<=desc.Width&&logicalH<=desc.Height&&(logicalW<desc.Width||logicalH<desc.Height))crop={0,0,(LONG)logicalW,(LONG)logicalH};
+ else if(sourceValid)crop=*source;
+ UINT sourceW=(UINT)(crop.right-crop.left),sourceH=(UINT)(crop.bottom-crop.top);
+ if(!sourceW||!sourceH||(sourceW==desc.Width&&sourceH==desc.Height)){back->Release();return false;}
+ RECT content={0,0,(LONG)desc.Width,(LONG)desc.Height};bool aspectFit=scaleAspectMode==1;
+ if(aspectFit){
+  uint64_t sourceCross=(uint64_t)sourceW*desc.Height,targetCross=(uint64_t)sourceH*desc.Width;
+  if(sourceCross<targetCross){UINT fitW=(UINT)((uint64_t)sourceW*desc.Height/sourceH);fitW=std::clamp<UINT>(fitW,1,desc.Width);content.left=(LONG)((desc.Width-fitW)/2);content.right=content.left+(LONG)fitW;}
+  else if(sourceCross>targetCross){UINT fitH=(UINT)((uint64_t)sourceH*desc.Width/sourceW);fitH=std::clamp<UINT>(fitH,1,desc.Height);content.top=(LONG)((desc.Height-fitH)/2);content.bottom=content.top+(LONG)fitH;}
+  aspectFit=content.left||content.top||content.right!=(LONG)desc.Width||content.bottom!=(LONG)desc.Height;
+ }
+ IDirect3DSurface9* temp=acquireScaleSurface(d,sourceW,sourceH,desc.Format);if(!temp){back->Release();return false;}
+ HRESULT copyHr=d->StretchRect(back,&crop,temp,nullptr,D3DTEXF_NONE),scaleHr=S_OK;bool cubic=false,backdropReady=!aspectFit;
+ if(SUCCEEDED(copyHr)&&aspectFit){scaleHr=drawAspectBackdrop(d,temp,back,sourceW,sourceH,desc.Format);backdropReady=SUCCEEDED(scaleHr);}
+ if(SUCCEEDED(copyHr)&&!backdropReady){
+  // If a driver rejects the low-resolution render target, keep a full-frame
+  // stretched backdrop rather than leaving black bars or edge-column streaks.
+  scaleHr=d->StretchRect(temp,nullptr,back,nullptr,standardScaleFilter());backdropReady=SUCCEEDED(scaleHr);
+ }
+ if(SUCCEEDED(copyHr)&&backdropReady&&scaleFilter==2)cubic=cubicScaleToOutput(d,temp,back,nullptr,aspectFit?&content:nullptr);
+ if(SUCCEEDED(copyHr)&&backdropReady&&!cubic)scaleHr=d->StretchRect(temp,nullptr,back,aspectFit?&content:nullptr,standardScaleFilter());
  bool logAttempt=false,logFailure=false;
- {std::lock_guard<std::mutex> lock(tableMutex);logAttempt=loggedScaleDevices.insert(d).second;if(FAILED(copyHr)||FAILED(scaleHr))logFailure=loggedScaleFailures.insert(d).second;}
- if(logAttempt||logFailure)logf("D3D scale frame source=%ux%u destination=%ux%u filter=%u copy_hr=%08lx scale_hr=%08lx",logicalW,logicalH,desc.Width,desc.Height,scaleFilter,copyHr,scaleHr);
- temp->Release();back->Release();
+ {std::lock_guard<std::mutex> lock(tableMutex);logAttempt=loggedScaleDevices.insert(d).second;if(!cubic&&(FAILED(copyHr)||FAILED(scaleHr)))logFailure=loggedScaleFailures.insert(d).second;}
+ if(logAttempt||logFailure)logf("D3D primary single-present scale crop=%ld,%ld %ux%u destination=%ux%u filter=%u cubic=%d aspect_mode=%d backdrop=%d content=%ld,%ld-%ld,%ld source_hr=%08lx scale_hr=%08lx present_source=%d present_destination=%d",crop.left,crop.top,sourceW,sourceH,desc.Width,desc.Height,scaleFilter,cubic,scaleAspectMode,backdropReady,content.left,content.top,content.right,content.bottom,copyHr,scaleHr,source!=nullptr,destination!=nullptr);
+ if(temp)temp->Release();back->Release();
+ return SUCCEEDED(copyHr)&&(cubic||SUCCEEDED(scaleHr));
 }
 static void pacePresentation() {
  if(fpsLimit<=0)return;
@@ -302,17 +409,52 @@ static void pacePresentation() {
  if(remainder>=fpsLimit){nextTick++;remainder-=fpsLimit;}
 }
 static ULONG WINAPI platformRelease(void* object) {
- auto fn=(ULONG(WINAPI*)(void*))originalMethod(object,2);if(!fn)return 0;
+ auto fn=(ULONG(WINAPI*)(void*))originalMethod(object,2);if(!fn||fn==platformRelease)return 0;
  ULONG refs=fn(object);
- if(!refs){releaseScaleSurface(object);releaseNativeOutputChain(object);std::lock_guard<std::mutex> lock(tableMutex);renderDevices.erase(object);logicalRenderSizes.erase(object);nativeOutputDevices.erase(object);loggedNativeViewports.erase(object);loggedNativeScissors.erase(object);}
+ if(!refs){releaseScaleSurface(object);releaseNativeOutputChain(object);std::lock_guard<std::mutex> lock(tableMutex);renderDevices.erase(object);logicalRenderSizes.erase(object);nativeOutputDevices.erase(object);loggedNativeViewports.erase(object);loggedNativeScissors.erase(object);loggedPrimaryPresentParameters.erase(object);}
  return refs;
 }
 static void hookTable(void** table,size_t index,void* hook) {
  if(!table)return;
  // Patch only the requested private vtable slots; never truncate/copy them.
- std::lock_guard<std::mutex> lock(tableMutex);auto& entry=tables[table];
- if(!entry.release)entry.release=table[2];
- if(!entry.methods.count(index))entry.methods[index]=table[index];
+ std::unique_lock<std::mutex> lock(tableMutex);auto& entry=tables[table];
+ // An overlay can copy an already hooked private COM table. Never save our
+ // wrapper as its own original: that causes unbounded Release/Present recursion.
+ // Match the immutable IUnknown methods to find the copied table's originals.
+ if(entry.query&&(entry.query!=table[0]||entry.addRef!=table[1]))entry=TableHook{};
+ entry.query=table[0];entry.addRef=table[1];
+ for(const auto& known:tables){
+  const auto& candidate=known.second;
+  if(&candidate==&entry||candidate.query!=entry.query||candidate.addRef!=entry.addRef)continue;
+  for(const auto& method:candidate.hooks){
+   if(table[method.first]!=method.second||entry.methods.count(method.first))continue;
+   auto original=candidate.methods.find(method.first);
+   if(original!=candidate.methods.end()){
+    entry.methods[method.first]=original->second;entry.hooks[method.first]=method.second;
+   }
+  }
+ }
+ auto inherited=[&](size_t slot,void* wrapper)->void*{
+  for(const auto& known:tables){
+   const auto& candidate=known.second;
+   if(&candidate==&entry||candidate.query!=entry.query||candidate.addRef!=entry.addRef)continue;
+   void* original=nullptr;
+   if(slot==2)original=candidate.release;
+   else {auto i=candidate.methods.find(slot);if(i!=candidate.methods.end())original=i->second;}
+   if(original&&original!=wrapper)return original;
+  }
+  return nullptr;
+ };
+ if(!entry.release){
+  entry.release=table[2]==(void*)platformRelease?inherited(2,(void*)platformRelease):table[2];
+  if(!entry.release){lock.unlock();logf("COM hook skipped: inherited Release original unavailable table=%p",table);return;}
+ }
+ if(!entry.methods.count(index)){
+  void* original=table[index]==hook?inherited(index,hook):table[index];
+  if(!original){lock.unlock();logf("COM hook skipped: inherited original unavailable table=%p slot=%u",table,(unsigned)index);return;}
+  entry.methods[index]=original;
+ }
+ entry.hooks[index]=hook;
  DWORD old=0;
  if(VirtualProtect(table+2,sizeof(void*),PAGE_READWRITE,&old)){
   InterlockedExchangePointer(table+2,(void*)platformRelease);DWORD discard;VirtualProtect(table+2,sizeof(void*),old,&discard);
@@ -327,9 +469,21 @@ static void hookMethod(void* object,size_t index,void* hook) {
 static void forcePresentation(D3DPRESENT_PARAMETERS& p) {
  if(!windowMode){if(fpsLimit>0)p.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;return;}
  p.Windowed=TRUE;p.FullScreen_RefreshRateInHz=0;
+ // The legacy titles use game-specific display setup code but create their
+ // final scene through D3D9. They keep their own backbuffer: the DW4 Hyper /
+ // DW5 Special profiles refuse every render-size override above.
+ if(legacyInternalResolutionEnabled()&&needsNativeOutputChain(p)){
+  p.BackBufferWidth=(UINT)internalRenderWidth;p.BackBufferHeight=(UINT)internalRenderHeight;
+ }
  // Older Koei games keep their UI viewport at the selected game resolution.
  // Keep that buffer unless the profile explicitly asks for native rendering.
- if(nativeResolution&&!needsNativeOutputChain(p))getNativeDisplaySize(p.BackBufferWidth,p.BackBufferHeight);
+  if(nativeResolution&&!needsNativeOutputChain(p)){
+   UINT nativeW=0,nativeH=0;getNativeDisplaySize(nativeW,nativeH);
+   // Keep an explicitly higher-than-desktop game render target (for example
+   // DW8's 3840x2160 target). The windowed primary swapchain lets DWM scale it
+   // to the client area, while retaining the single Present/gamma path.
+   if(!singlePresentMode||p.BackBufferWidth<=nativeW||p.BackBufferHeight<=nativeH){p.BackBufferWidth=nativeW;p.BackBufferHeight=nativeH;}
+  }
  else if(forceNativeBuffer&&!needsNativeOutputChain(p)){p.BackBufferWidth=renderWidth;p.BackBufferHeight=renderHeight;}
  // An explicit game frame limit owns the cadence; do not add a second wait
  // tied to the desktop refresh rate. Windowed mode leaves the monitor mode intact.
@@ -338,6 +492,8 @@ static void forcePresentation(D3DPRESENT_PARAMETERS& p) {
 }
 static HRESULT WINAPI platformReset(IDirect3DDevice9* d,D3DPRESENT_PARAMETERS* p) {
  if(!p)return D3DERR_INVALIDCALL;
+ if(resetReentry){reportReentry("Reset");return D3D_OK;}
+ ReentryGuard guard(resetReentry);
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRESENT_PARAMETERS*))originalMethod(d,16);
  bool ours=false,output=false;{std::lock_guard<std::mutex> lock(tableMutex);ours=renderDevices.count(d)!=0;output=nativeOutputDevices.count(d)!=0;}
  if(!ours&&gameWindow&&(windowMode||fpsLimit>0)){
@@ -346,8 +502,9 @@ static HRESULT WINAPI platformReset(IDirect3DDevice9* d,D3DPRESENT_PARAMETERS* p
   if(get&&SUCCEEDED(get(d,&cp))&&cp.hFocusWindow==gameWindow){ours=true;std::lock_guard<std::mutex> lock(tableMutex);renderDevices.insert(d);}
  }
  UINT requestedW=p->BackBufferWidth,requestedH=p->BackBufferHeight;BOOL requestedWindowed=p->Windowed;
- if(ours){releaseScaleSurface(d);releaseNativeOutputChain(d);if(output){p->Windowed=TRUE;p->FullScreen_RefreshRateInHz=0;if(p->PresentationInterval!=D3DPRESENT_INTERVAL_IMMEDIATE)p->PresentationInterval=D3DPRESENT_INTERVAL_ONE;}else forcePresentation(*p);}HRESULT hr=fn?fn(d,p):D3DERR_INVALIDCALL;
- if(ours&&nativeResolution&&SUCCEEDED(hr)&&requestedW&&requestedH){std::lock_guard<std::mutex> lock(tableMutex);logicalRenderSizes[d]={requestedW,requestedH};}
+ UINT preservedLogicalW=0,preservedLogicalH=0;{std::lock_guard<std::mutex> lock(tableMutex);auto i=logicalRenderSizes.find(d);if(i!=logicalRenderSizes.end()){preservedLogicalW=i->second.first;preservedLogicalH=i->second.second;}}
+ if(ours){releaseScaleSurface(d);releaseNativeOutputChain(d);if(output){p->Windowed=TRUE;p->FullScreen_RefreshRateInHz=0;if(legacyInternalResolutionEnabled()){p->BackBufferWidth=(UINT)internalRenderWidth;p->BackBufferHeight=(UINT)internalRenderHeight;}if(p->PresentationInterval!=D3DPRESENT_INTERVAL_IMMEDIATE)p->PresentationInterval=D3DPRESENT_INTERVAL_ONE;}else forcePresentation(*p);}HRESULT hr=fn?fn(d,p):D3DERR_INVALIDCALL;
+ if(ours&&nativeResolution&&SUCCEEDED(hr)&&requestedW&&requestedH){UINT desktopW=0,desktopH=0;getNativeDisplaySize(desktopW,desktopH);bool desktopReset=requestedW==desktopW&&requestedH==desktopH&&preservedLogicalW&&preservedLogicalH&&(preservedLogicalW<desktopW||preservedLogicalH<desktopH);{std::lock_guard<std::mutex> lock(tableMutex);if(!desktopReset)logicalRenderSizes[d]={requestedW,requestedH};}if(desktopReset)logf("D3D Reset kept logical render size=%ux%u across desktop-sized reset=%ux%u",preservedLogicalW,preservedLogicalH,requestedW,requestedH);}
  if(output&&SUCCEEDED(hr))createNativeOutputChain(d);
  logf("D3D Reset request=%ux%u/%d actual=%ux%u/%d hr=%08lx",requestedW,requestedH,requestedWindowed,p->BackBufferWidth,p->BackBufferHeight,p->Windowed,hr);return hr;
 }
@@ -365,7 +522,10 @@ static HRESULT WINAPI platformSetViewport(IDirect3DDevice9* d,const D3DVIEWPORT9
  return fn(d,requested);
 }
 static HRESULT WINAPI platformSetScissorRect(IDirect3DDevice9* d,const RECT* requested) {
- auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,const RECT*))originalMethod(d,64);
+ // IDirect3DDevice9::SetScissorRect is vtable slot 75. Slot 64 is GetTexture;
+ // hooking it with this signature makes texture reads fail and leaves the
+ // actual scissor rectangle unscaled.
+ auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,const RECT*))originalMethod(d,75);
  if(!fn||!requested)return D3DERR_INVALIDCALL;
  RECT adjusted=*requested;bool ours=false;UINT logicalW=0,logicalH=0;
  {std::lock_guard<std::mutex> lock(tableMutex);ours=renderDevices.count(d)!=0;auto i=logicalRenderSizes.find(d);if(i!=logicalRenderSizes.end()){logicalW=i->second.first;logicalH=i->second.second;}}
@@ -378,7 +538,12 @@ static HRESULT WINAPI platformSetScissorRect(IDirect3DDevice9* d,const RECT* req
  return fn(d,requested);
 }
 static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,const RECT* destination,HWND overrideWindow,const RGNDATA* dirty) {
+ if(presentReentry){reportReentry("Present");return D3D_OK;}
+ ReentryGuard guard(presentReentry);
+ pollCameraHotkeys();
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,const RECT*,const RECT*,HWND,const RGNDATA*))originalMethod(d,17);
+ bool firstParameters=false;{std::lock_guard<std::mutex> lock(tableMutex);firstParameters=loggedPrimaryPresentParameters.insert(d).second;}
+ if(firstParameters)logf("D3D primary Present parameters source=%d [%ld,%ld,%ld,%ld] destination=%d [%ld,%ld,%ld,%ld] dirty=%d",source!=nullptr,source?source->left:0,source?source->top:0,source?source->right:0,source?source->bottom:0,destination!=nullptr,destination?destination->left:0,destination?destination->top:0,destination?destination->right:0,destination?destination->bottom:0,dirty!=nullptr);
  IDirect3DSwapChain9* chain=nullptr;{std::lock_guard<std::mutex> lock(tableMutex);auto i=nativeOutputChains.find(d);if(i!=nativeOutputChains.end()){chain=i->second;chain->AddRef();}}
  HRESULT copyHr=E_FAIL;bool cubicUsed=false;
  if(chain){
@@ -387,8 +552,9 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
    if(scaleFilter==2&&cubicScaleToOutput(d,from,to)){copyHr=S_OK;cubicUsed=true;}
    else copyHr=d->StretchRect(from,nullptr,to,nullptr,standardScaleFilter());
   if(from)from->Release();if(to)to->Release();
- }else scaleBackbufferToNative(d,source,destination);
- HRESULT hr=fn?fn(d,source,destination,overrideWindow,dirty):D3DERR_INVALIDCALL;
+  }
+ bool scaled=!chain&&scaleBackbufferToNative(d,source,destination);
+ HRESULT hr=fn?fn(d,scaled?nullptr:source,scaled?nullptr:destination,overrideWindow,scaled?nullptr:dirty):D3DERR_INVALIDCALL;
  // Pace after displaying this frame so the next game-loop iteration can
  // sample input and render before its next Present deadline.
  if(fpsLimit>0)pacePresentation();
@@ -405,8 +571,41 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
  }
  return hr;
 }
+// A repaired full-screen GS background at z=0 must not fill the depth
+// buffer and hide later 3D maps/loading/results. Preserve depth testing for
+// every draw; disable only depth writes on the identified background quad.
+static HRESULT WINAPI orochiDrawIndexedPrimitive(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,INT base,UINT min,UINT num,UINT start,UINT count) {
+ if(drawReentry){reportReentry("DrawIndexedPrimitive");return D3D_OK;}
+ ReentryGuard guard(drawReentry);
+ auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,INT,UINT,UINT,UINT,UINT))originalMethod(d,82);if(!fn)return D3DERR_INVALIDCALL;
+ DWORD fvf=0;bool background=false;
+ if(num==4&&count==2&&SUCCEEDED(d->GetFVF(&fvf))&&(fvf&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW){
+  IDirect3DVertexBuffer9* buffer=nullptr;UINT offset=0,stride=0;
+  if(SUCCEEDED(d->GetStreamSource(0,&buffer,&offset,&stride))&&buffer){
+   void* data=nullptr;const LONGLONG first=(LONGLONG)base+min;
+   if(stride>=16&&stride<=256&&first>=0&&first*stride+offset<=0xffffffffu-stride*4&&SUCCEEDED(buffer->Lock(offset+(UINT)first*stride,stride*4,&data,0))){
+    float left=1e9f,top=1e9f,right=-1e9f,bottom=-1e9f;bool zeroDepth=true;
+    for(unsigned i=0;i<4;i++){
+     const float* v=(const float*)((BYTE*)data+i*stride);
+     left=std::min(left,v[0]);right=std::max(right,v[0]);top=std::min(top,v[1]);bottom=std::max(bottom,v[1]);
+     if(v[2]!=0.0f)zeroDepth=false;
+    }
+    background=zeroDepth&&left<=0.0f&&top<=0.0f&&right>=renderWidth-1.0f&&bottom>=renderHeight-1.0f;
+    buffer->Unlock();
+   }
+   buffer->Release();
+  }
+ }
+ DWORD writes=FALSE;
+ if(background&&SUCCEEDED(d->GetRenderState(D3DRS_ZWRITEENABLE,&writes))&&writes)d->SetRenderState(D3DRS_ZWRITEENABLE,FALSE);
+ HRESULT hr=fn(d,type,base,min,num,start,count);
+ if(background&&writes)d->SetRenderState(D3DRS_ZWRITEENABLE,writes);
+ return hr;
+}
 static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE type,HWND focus,DWORD flags,D3DPRESENT_PARAMETERS* p,IDirect3DDevice9** out) {
  if(!p||!out)return D3DERR_INVALIDCALL;
+ if(createReentry){reportReentry("CreateDevice");return D3DERR_INVALIDCALL;}
+ ReentryGuard guard(createReentry);
  attachExistingMainWindow();
  if(!gameWindow&&isSsm6DxExecutable(gameExeName)){
   HWND candidate=p->hDeviceWindow?p->hDeviceWindow:focus;
@@ -426,11 +625,16 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  if(ours)forcePresentation(*p);HRESULT hr=fn?fn(d,adapter,type,focus,flags,p,out):D3DERR_INVALIDCALL;
  logf("D3D CreateDevice device=%p focus=%p present_hwnd=%p game_hwnd=%p ours=%d flags=%08lx request=%ux%u/%d actual=%ux%u/%d hr=%08lx",SUCCEEDED(hr)&&out?*out:nullptr,focus,p->hDeviceWindow,gameWindow,ours,flags,requestedW,requestedH,requestedWindowed,p->BackBufferWidth,p->BackBufferHeight,p->Windowed,hr);
  if(SUCCEEDED(hr)&&*out){
-  if(ours&&(nativeResolution||fpsLimit>0)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d",fpsLimit);}
+  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d",fpsLimit,singlePresentMode,nativeOutput);}
   if(ours){
-   UINT logicalW=requestedW,logicalH=requestedH;if(nativeResolution&&(!logicalW||!logicalH))getNativeDisplaySize(logicalW,logicalH);
-   {std::lock_guard<std::mutex> lock(tableMutex);renderDevices.insert(*out);if(nativeResolution)logicalRenderSizes[*out]={logicalW,logicalH};if(nativeOutput)nativeOutputDevices.insert(*out);}
-   hookMethod(*out,16,(void*)platformReset);if(nativeResolution&&!scaleToFill){hookMethod(*out,47,(void*)platformSetViewport);hookMethod(*out,64,(void*)platformSetScissorRect);}
+   UINT logicalW=requestedW,logicalH=requestedH;
+   if(((legacyInternalResolutionEnabled()&&nativeOutput)||nativeResolution)&&(!logicalW||!logicalH))getNativeDisplaySize(logicalW,logicalH);
+   {std::lock_guard<std::mutex> lock(tableMutex);renderDevices.insert(*out);if(nativeResolution||(legacyInternalResolutionEnabled()&&nativeOutput))logicalRenderSizes[*out]={logicalW,logicalH};if(nativeOutput)nativeOutputDevices.insert(*out);}
+   hookMethod(*out,16,(void*)platformReset);
+   if(!_stricmp(gameExeName,"OROCHI_Z_TC.exe")&&internalRenderHeight>2048){
+    hookMethod(*out,82,(void*)orochiDrawIndexedPrimitive);
+    logf("Orochi high-resolution background-only depth-write correction installed");
+   }if((nativeResolution&&!scaleToFill)||(legacyInternalResolutionEnabled()&&nativeOutput)){hookMethod(*out,47,(void*)platformSetViewport);hookMethod(*out,75,(void*)platformSetScissorRect);}
    IDirect3DSurface9* back=nullptr;
    if(SUCCEEDED((*out)->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back))){D3DSURFACE_DESC desc={};back->GetDesc(&desc);logf("actual backbuffer %ux%u",desc.Width,desc.Height);back->Release();}
    if(nativeOutput)createNativeOutputChain(*out);
@@ -439,9 +643,9 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  return hr;
 }
 static IDirect3D9* WINAPI platformCreateD3D(UINT sdk) {
- initializeAll();logf("Direct3DCreate9 hook entered fps_limit=%d borderless=%d",fpsLimit,windowMode);
+ initializeAll();patchSsm7Resolution();patchSsm7Camera();patchOrochiCamera();logf("Direct3DCreate9 hook entered fps_limit=%d borderless=%d",fpsLimit,windowMode);
  IDirect3D9* d=realCreateD3D?realCreateD3D(sdk):nullptr;
- if(d&&(windowMode||fpsLimit>0))hookMethod(d,16,(void*)platformCreateDevice);return d;
+ if(d&&(windowMode||fpsLimit>0||cameraTweakActive))hookMethod(d,16,(void*)platformCreateDevice);return d;
 }
 static bool d3d9DeviceTable(void** table,uintptr_t moduleBase,uintptr_t moduleEnd,void* present,void* reset) {
  void* methods[119]={};SIZE_T bytesRead=0;
@@ -452,6 +656,11 @@ static bool d3d9DeviceTable(void** table,uintptr_t moduleBase,uintptr_t moduleEn
  return inImage>=100;
 }
 static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTable) {
+ // The early Direct3DCreate9/CreateDevice hook normally owns the game device a
+ // few milliseconds after startup. Never install a second hook over a table we
+ // already control: with an overlay such as Steam's gameoverlayrenderer in the
+ // chain that produced a wrapper loop and ended in a stack overflow.
+ {std::lock_guard<std::mutex> lock(tableMutex);if(!renderDevices.empty())return 0;}
  HMODULE module=GetModuleHandleA("d3d9.dll");if(!module)return 0;
  BYTE* base=(BYTE*)module;auto dos=(IMAGE_DOS_HEADER*)base;if(dos->e_magic!=IMAGE_DOS_SIGNATURE)return 0;
  auto nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);uintptr_t moduleBase=(uintptr_t)base,moduleEnd=moduleBase+nt->OptionalHeader.SizeOfImage;
@@ -514,7 +723,19 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
  if(FAILED(hr)||!device){DestroyWindow(probe);api->Release();logf("late D3D9 hook failed: probe CreateDevice hr=%08lx",hr);return 0;}
  void** probeTable=*(void***)device;void* present=probeTable[17];void* reset=probeTable[16];
  logf("late D3D9 watcher started present=%p reset=%p",present,reset);
+ if(GetModuleHandleA("gameoverlayrenderer.dll")){
+  logf("late D3D9 watcher skipped: Steam overlay is loaded and the early CreateDevice hook owns the game device");
+  device->Release();DestroyWindow(probe);api->Release();return 0;
+ }
  for(unsigned attempt=1;attempt<=120;attempt++){
+  // Give the game time to create its first device through the early hook so the
+  // ownership check below sees it; a late-loading dinput8 simply keeps waiting.
+  if(attempt==1)Sleep(400);
+  bool earlyHooked=false;{std::lock_guard<std::mutex> lock(tableMutex);earlyHooked=!renderDevices.empty();}
+  if(earlyHooked){
+   logf("late D3D9 watcher stopped after %u scans: early CreateDevice hook already hooked the game device",attempt-1);
+   device->Release();DestroyWindow(probe);api->Release();return 0;
+  }
   unsigned hooked=hookExistingD3D9Tables(present,reset,probeTable);
   if(hooked){logf("late D3D9 watcher attached after %u scans",attempt);device->Release();DestroyWindow(probe);api->Release();return 0;}
   if(attempt%20==0)logf("late D3D9 watcher waiting for game device attempt=%u",attempt);
@@ -525,6 +746,12 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
 }
 static bool attachLateD3DPresentHook() {
  if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0))return false;
+ // DW3/DW4's Direct3DCreate9 entry point is imported and hooked before the
+ // games create their devices. The extra probe/heap scan is redundant here;
+ // it had started immediately before the recorded DW4 startup stack overflow.
+ if(isLegacyHighResolutionExecutable(gameExeName)){
+  lateD3DHookAttempted=true;logf("late D3D9 watcher skipped for %s: early CreateDevice hook is active",gameExeName);return false;
+ }
  lateD3DHookAttempted=true;
  HANDLE thread=CreateThread(nullptr,0,lateD3DPresentWatch,nullptr,0,nullptr);
  if(!thread){lateD3DHookAttempted=false;logf("late D3D9 watcher failed to start error=%lu",GetLastError());return false;}
@@ -539,6 +766,286 @@ static bool replaceCode(BYTE* location,const BYTE* expected,SIZE_T n,const BYTE*
 static bool constantGetter(BYTE* base,DWORD rva,int value) {
  const BYTE prefix[]={0x0f,0xb6,0x05};BYTE code[]={0xb8,0,0,0,0,0xc3};memcpy(code+1,&value,4);
  return replaceCode(base+rva,prefix,sizeof(prefix),code,sizeof(code));
+}
+// Port of the SM6 resolution mod's engine-constant method. These RVAs are
+// verified against the unpacked DW8 Launch.exe build, never against SM6 offsets.
+// Preserve the lens and UI projection: move only the 3D viewpoint along
+// its eye-to-target line. Read the setting periodically so it can be tuned
+// in combat without restarting. Caller checks exclude unrelated math users.
+struct Ssm7CameraVector {float x,y,z;};
+using Ssm7LookAtFn=D3DMATRIX*(WINAPI*)(D3DMATRIX*,const Ssm7CameraVector*,const Ssm7CameraVector*,const Ssm7CameraVector*);
+static Ssm7LookAtFn realSsm7LookAt=nullptr;
+static volatile LONG cameraDistancePercent=100,cameraPollBusy=0;
+static DWORD cameraSettingsTick=0;
+static int cameraHotkeys=1,cameraStep=5,cameraModifiers=3;
+static int cameraFarKey=VK_PRIOR,cameraNearKey=VK_NEXT,cameraResetKey=VK_HOME;
+static void readCameraSettings() {
+ auto opt=[](const char* name,int fallback){return (int)GetPrivateProfileIntA("platform",name,fallback,iniPath);};
+ InterlockedExchange(&cameraDistancePercent,std::clamp(opt("camera_distance_percent",100),50,300));
+ cameraHotkeys=opt("camera_hotkeys",1)!=0;
+ cameraStep=std::clamp(opt("camera_distance_step",5),1,50);
+ cameraModifiers=opt("camera_hotkey_modifiers",3)&7;
+ cameraFarKey=std::clamp(opt("camera_hotkey_farther",VK_PRIOR),0,255);
+ cameraNearKey=std::clamp(opt("camera_hotkey_nearer",VK_NEXT),0,255);
+ cameraResetKey=std::clamp(opt("camera_hotkey_reset",VK_HOME),0,255);
+ cameraSettingsTick=GetTickCount();
+}
+static void pollCameraHotkeys() {
+ if(!cameraTweakActive||InterlockedCompareExchange(&cameraPollBusy,1,0))return;
+ struct Unlock {~Unlock(){InterlockedExchange(&cameraPollBusy,0);}} unlock;
+ DWORD now=GetTickCount();
+ if((DWORD)(now-cameraSettingsTick)>=500)readCameraSettings();
+ static unsigned previous=0;
+ static DWORD repeatAt=0;
+ static bool armed=false;
+ DWORD owner=0;GetWindowThreadProcessId(GetForegroundWindow(),&owner);
+ if(!cameraHotkeys||owner!=GetCurrentProcessId()){previous=0;armed=false;repeatAt=0;return;}
+ auto down=[](int vk){return vk>0&&(GetAsyncKeyState(vk)&0x8000)!=0;};
+ bool modifiers=(!(cameraModifiers&1)||down(VK_CONTROL))&&(!(cameraModifiers&2)||down(VK_MENU))&&(!(cameraModifiers&4)||down(VK_SHIFT));
+ unsigned held=modifiers?((down(cameraFarKey)?1u:0u)|(down(cameraNearKey)?2u:0u)|(down(cameraResetKey)?4u:0u)):0;
+ // A combination held while switching into the game must be released first.
+ if(!armed){if(!held)armed=true;previous=held;return;}
+ unsigned pressed=held&~previous;
+ int old=(int)InterlockedCompareExchange(&cameraDistancePercent,0,0),value=old;
+ if(pressed&4)value=100;
+ else if((held&3)!=3&&!(held&4)){
+  unsigned direction=held&3;
+  if((pressed&3)||(direction&&repeatAt&&(LONG)(now-repeatAt)>=0)){
+   if(direction==1)value+=cameraStep;
+   else if(direction==2)value-=cameraStep;
+   repeatAt=now+((pressed&3)?350u:150u);
+  }
+ }
+ if(!held)repeatAt=0;
+ previous=held;value=std::clamp(value,50,300);
+ if(value!=old){
+  InterlockedExchange(&cameraDistancePercent,value);
+  char number[12];sprintf_s(number,"%d",value);
+  BOOL saved=WritePrivateProfileStringA("platform","camera_distance_percent",number,iniPath);
+  logf("camera hotkey distance=%d saved=%d",value,saved);
+ }
+}
+
+static D3DMATRIX* WINAPI ssm7CameraLookAt(D3DMATRIX* matrix,const Ssm7CameraVector* eye,const Ssm7CameraVector* target,const Ssm7CameraVector* up) {
+ if(!realSsm7LookAt)return nullptr;
+ const uintptr_t caller=(uintptr_t)_ReturnAddress()-(uintptr_t)GetModuleHandleA(nullptr);
+ if(caller!=0x11585a&&caller!=0x22c12b&&caller!=0x22c8b0&&caller!=0x22eb4f)return realSsm7LookAt(matrix,eye,target,up);
+ const int percent=(int)InterlockedCompareExchange(&cameraDistancePercent,0,0);
+ if(percent==100||!eye||!target)return realSsm7LookAt(matrix,eye,target,up);
+ const float scale=percent/100.0f;
+ const Ssm7CameraVector adjusted={target->x+(eye->x-target->x)*scale,target->y+(eye->y-target->y)*scale,target->z+(eye->z-target->z)*scale};
+ return realSsm7LookAt(matrix,&adjusted,target,up);
+}
+static void patchSsm7Camera() {
+ if(cameraTweakActive||_stricmp(gameExeName,"Launch.exe"))return;
+ BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
+ auto nt=(IMAGE_NT_HEADERS*)(base+((IMAGE_DOS_HEADER*)base)->e_lfanew);
+ if(nt->OptionalHeader.SizeOfImage!=0x9ac000)return;
+ const BYTE indirectCall[]={0xff,0x15};
+ if(memcmp(base+0x115854,indirectCall,2)||*(DWORD*)(base+0x115856)!=(DWORD)(uintptr_t)(base+0x5d32f0))return;
+ void** slot=(void**)(base+0x5d32f0);
+ DWORD old=0;if(!VirtualProtect(slot,sizeof(void*),PAGE_READWRITE,&old))return;
+ realSsm7LookAt=(Ssm7LookAtFn)*slot;
+ InterlockedExchangePointer(slot,(void*)ssm7CameraLookAt);
+ DWORD discard;VirtualProtect(slot,sizeof(void*),old,&discard);
+ readCameraSettings();
+ cameraTweakActive=true;
+ logf("SSM7 3D camera distance installed; camera_distance_percent=50..300, live INI reload, 100=original");
+}
+// Orochi has a CPU projection for labels and a separate PC renderer camera.
+// Adjust both from the same temporary eye position, then restore the native
+// pose so smoothing never compounds the zoom. Slots 0/1 are the player views;
+// the preparation map uses a different camera and must keep its own framing.
+using OrochiProjectionFn=uintptr_t(__cdecl*)(BYTE*);
+using OrochiRendererCameraFn=uintptr_t(__cdecl*)(BYTE*,BYTE*);
+static OrochiProjectionFn originalOrochiProjection=nullptr;
+static OrochiRendererCameraFn originalOrochiRendererCamera=nullptr;
+static bool adjustOrochiCameraEye(BYTE* camera,float* saved) {
+ if(!camera)return false;
+ BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
+ BYTE** views=(BYTE**)(base+0x38a3d0);
+ if(camera!=views[0]&&camera!=views[1])return false;
+ int percent=(int)InterlockedCompareExchange(&cameraDistancePercent,0,0);
+ if(percent==100)return false;
+ float* eye=(float*)(camera+0x1c0);const float* target=(float*)(camera+0x1d0);
+ memcpy(saved,eye,3*sizeof(float));float scale=percent/100.0f;
+ for(unsigned i=0;i<3;i++)eye[i]=target[i]+(eye[i]-target[i])*scale;
+ return true;
+}
+static uintptr_t __cdecl orochiCameraProjection(BYTE* camera) {
+ float saved[3];bool changed=adjustOrochiCameraEye(camera,saved);
+ uintptr_t result=originalOrochiProjection(camera);
+ if(changed)memcpy(camera+0x1c0,saved,sizeof(saved));
+ return result;
+}
+static uintptr_t __cdecl orochiRendererCamera(BYTE* renderer,BYTE* camera) {
+ float saved[3];bool changed=adjustOrochiCameraEye(camera,saved);
+ uintptr_t result=originalOrochiRendererCamera(renderer,camera);
+ if(changed)memcpy(camera+0x1c0,saved,sizeof(saved));
+ return result;
+}
+static bool buildOrochiCameraTrampoline(BYTE* site,const BYTE* expected,SIZE_T size,void* hook,void** original) {
+ if(memcmp(site,expected,size))return false;
+ BYTE* code=(BYTE*)VirtualAlloc(nullptr,size+5,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);
+ if(!code)return false;
+ // These verified prologues contain only stack/register instructions.
+ memcpy(code,expected,size);code[size]=0xe9;
+ LONG back=(LONG)((site+size)-(code+size+5));memcpy(code+size+1,&back,4);
+ BYTE jump[8]={0xe9,0,0,0,0,0x90,0x90,0x90};LONG forward=(LONG)((BYTE*)hook-(site+5));memcpy(jump+1,&forward,4);
+ *original=code;FlushInstructionCache(GetCurrentProcess(),code,size+5);
+ if(!replaceCode(site,expected,size,jump,size)){VirtualFree(code,0,MEM_RELEASE);*original=nullptr;return false;}
+ DWORD old;VirtualProtect(code,size+5,PAGE_EXECUTE_READ,&old);return true;
+}
+static void patchOrochiCamera() {
+ if(cameraTweakActive||_stricmp(gameExeName,"OROCHI_Z_TC.exe")||!nativeMenuMap)return;
+ BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
+ const BYTE projection[]={0x83,0xec,0x74,0x53,0x8b,0x5c,0x24,0x7c};
+ const BYTE renderer[]={0x83,0xec,0x30,0x56,0x8b,0x74,0x24,0x3c};
+ if(memcmp(base+0xf9c70,projection,sizeof(projection))||memcmp(base+0xf9950,renderer,sizeof(renderer)))return;
+ if(!buildOrochiCameraTrampoline(base+0xf9c70,projection,sizeof(projection),(void*)orochiCameraProjection,(void**)&originalOrochiProjection))return;
+ if(!buildOrochiCameraTrampoline(base+0xf9950,renderer,sizeof(renderer),(void*)orochiRendererCamera,(void**)&originalOrochiRendererCamera))return;
+ readCameraSettings();cameraTweakActive=true;
+ logf("Orochi player camera distance installed: CPU projection + renderer; preparation map excluded");
+}
+static void patchSsm7Resolution() {
+ // Port the config-driven width/height replacement model from SM6 DX's
+ // resolution_for_SM6TC mod. Its addresses belong to SM6TC's packed image;
+ // Launch.exe uses this separately verified table instead.
+ if(ssm7ResolutionPatched||_stricmp(gameExeName,"Launch.exe")||internalRenderWidth<640||internalRenderHeight<360)return;
+ if((ULONGLONG)internalRenderWidth*9!=(ULONGLONG)internalRenderHeight*16){logf("SSM7 engine resolution rejected: expected 16:9");return;}
+ BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
+ struct Site {DWORD rva;BYTE opcode;DWORD original;bool width;BYTE stackOffset=0;};
+ static const Site sites[]={
+  {0x30a0,0xba,480,false},
+  {0x30a7,0xba,600,false},
+  {0x30ae,0xba,720,false},
+  {0x30b5,0xba,960,false},
+  {0x30bc,0xba,1024,false},
+  {0x30c3,0xba,900,false},
+  {0x30ca,0xba,1200,false},
+  {0x30d1,0xba,1080,false},
+  {0x30d8,0xba,768,false},
+  {0x30e9,0xb8,640,true},
+  {0x30f3,0xb8,800,true},
+  {0x30fd,0xb8,1280,true},
+  {0x3107,0xb8,1600,true},
+  {0x3111,0xb8,1920,true},
+  {0x311b,0xb8,1024,true},
+  {0x31b7,0xb8,480,false},
+  {0x31bd,0xb8,600,false},
+  {0x31c3,0xb8,720,false},
+  {0x31c9,0xb8,960,false},
+  {0x31cf,0xb8,1024,false},
+  {0x31d5,0xb8,900,false},
+  {0x31db,0xb8,1200,false},
+  {0x31e1,0xb8,1080,false},
+  {0x31e7,0xb8,768,false},
+  {0x3767,0xb8,640,true},
+  {0x376d,0xb8,800,true},
+  {0x3773,0xb8,1280,true},
+  {0x3779,0xb8,1600,true},
+  {0x377f,0xb8,1920,true},
+  {0x3785,0xb8,1024,true},
+  {0x5b755d,0xb8,480,false},
+  {0x5b7563,0xb8,600,false},
+  {0x5b7569,0xb8,720,false},
+  {0x5b756f,0xb8,960,false},
+  {0x5b7575,0xb8,1024,false},
+  {0x5b757b,0xb8,900,false},
+  {0x5b7581,0xb8,1200,false},
+  {0x5b7587,0xb8,1080,false},
+  {0x5b758d,0xb8,768,false},
+  {0x5b75cd,0xb8,640,true},
+  {0x5b75d3,0xb8,800,true},
+  {0x5b75d9,0xb8,1280,true},
+  {0x5b75df,0xb8,1600,true},
+  {0x5b75e5,0xb8,1920,true},
+  {0x5b75eb,0xb8,1024,true},
+  {0x5c2c52,0xbe,640,true},
+  {0x5c2c59,0xbe,800,true},
+  {0x5c2c60,0xbe,1280,true},
+  {0x5c2c67,0xbe,1600,true},
+  {0x5c2c6e,0xbe,1920,true},
+  {0x5c2c75,0xbe,1024,true},
+  {0x5ca198,0xb8,640,true},
+  {0x5ca19f,0xb8,800,true},
+  {0x5ca1a6,0xb8,1280,true},
+  {0x5ca1ad,0xb8,1600,true},
+  {0x5ca1b4,0xb8,1920,true},
+  {0x5ca1bb,0xb8,1024,true},
+  {0x5ca276,0xb8,640,true},
+  {0x5ca27d,0xb8,800,true},
+  {0x5ca284,0xb8,1280,true},
+  {0x5ca28b,0xb8,1600,true},
+  {0x5ca292,0xb8,1920,true},
+  {0x5ca299,0xb8,1024,true},
+  {0x5caaac,0xb8,640,true},
+  {0x5caab3,0xb8,800,true},
+  {0x5caaba,0xb8,1280,true},
+  {0x5caac1,0xb8,1600,true},
+  {0x5caac8,0xb8,1920,true},
+  {0x5caacf,0xb8,1024,true},
+  {0x5cabc8,0xb8,640,true},
+  {0x5cabcf,0xb8,800,true},
+  {0x5cabd6,0xb8,1280,true},
+  {0x5cabdd,0xb8,1600,true},
+  {0x5cabe4,0xb8,1920,true},
+  {0x5cabeb,0xb8,1024,true},
+  {0x5cac99,0xb8,640,true},
+  {0x5caca0,0xb8,800,true},
+  {0x5caca7,0xb8,1280,true},
+  {0x5cacae,0xb8,1600,true},
+  {0x5cacb5,0xb8,1920,true},
+  {0x5cacbc,0xb8,1024,true},
+  {0x5caf3b,0xbd,640,true},
+  {0x5caf42,0xbd,800,true},
+  {0x5caf49,0xbd,1280,true},
+  {0x5caf50,0xbd,1600,true},
+  {0x5caf57,0xbd,1920,true},
+  {0x5caf5e,0xbd,1024,true},
+  {0x5caf75,0xb8,640,true},
+  {0x5caf7c,0xb8,800,true},
+  {0x5caf83,0xb8,1280,true},
+  {0x5caf8a,0xb8,1600,true},
+  {0x5caf91,0xb8,1920,true},
+  {0x5caf98,0xb8,1024,true},
+  // Battle camera and HUD clipping inline width profiles use stack stores.
+  // Their height comes from the shared getter; leaving these at 800 while
+  // replacing height with 2160 makes a narrow viewport and crops the HUD.
+  {0x581979,0xc7,640,true,0x0c},
+  {0x581983,0xc7,800,true,0x0c},
+  {0x58198d,0xc7,1280,true,0x0c},
+  {0x581997,0xc7,1600,true,0x0c},
+  {0x5819a1,0xc7,1920,true,0x0c},
+  {0x5819ab,0xc7,1024,true,0x0c},
+  {0x5bfc28,0xc7,640,true,0x10},
+  {0x5bfc32,0xc7,800,true,0x10},
+  {0x5bfc3c,0xc7,1280,true,0x10},
+  {0x5bfc46,0xc7,1600,true,0x10},
+  {0x5bfc50,0xc7,1920,true,0x10},
+  {0x5bfc5a,0xc7,1024,true,0x10},
+  {0x5bdad9,0xb8,360,false},
+  {0x5bdae3,0xb8,450,false},
+  {0x5bdaed,0xb8,720,false},
+  {0x5bdaf7,0xb8,900,false},
+  {0x5bdb01,0xb8,1080,false},
+ };
+ auto nt=(IMAGE_NT_HEADERS*)(base+((IMAGE_DOS_HEADER*)base)->e_lfanew);
+ if(nt->OptionalHeader.SizeOfImage!=0x9ac000)return;
+ // Validate every instruction before modifying any; retry after Steam unpacking.
+ for(const auto& site:sites){
+  if(memcmp(base+site.rva,&site.original,4))return;
+  if(site.stackOffset){
+   const BYTE store[]={0xc7,0x44,0x24,site.stackOffset};
+   if(memcmp(base+site.rva-4,store,sizeof(store)))return;
+  }else if(base[site.rva-1]!=site.opcode)return;
+ }
+ DWORD old=0;const SIZE_T span=0x5d2000;
+ if(!VirtualProtect(base+0x1000,span,PAGE_EXECUTE_READWRITE,&old)){logf("SSM7 resolution VirtualProtect failed=%lu",GetLastError());return;}
+ for(const auto& site:sites){DWORD value=site.width?internalRenderWidth:internalRenderHeight;memcpy(base+site.rva,&value,4);}
+ FlushInstructionCache(GetCurrentProcess(),base+0x1000,span);DWORD discard;VirtualProtect(base+0x1000,span,old,&discard);
+ ssm7ResolutionPatched=true;
+ logf("SSM7 engine resolution patched %dx%d sites=%u (engine resolution profiles replaced)",internalRenderWidth,internalRenderHeight,(unsigned)(sizeof(sites)/sizeof(sites[0])));
 }
 static void platformConfigure() {
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("platform",key,def,iniPath);};
@@ -555,27 +1062,85 @@ static void platformConfigure() {
  renderWidth=std::clamp(opt("render_width",0),0,8192);renderHeight=std::clamp(opt("render_height",0),0,8192);
  nativeResolution=std::clamp(opt("native_resolution",0),0,1)!=0;
  scaleToFill=std::clamp(opt("scale_to_fill",0),0,1)!=0;
+ scaleAspectMode=std::clamp(opt("scale_aspect_mode",0),0,1);
  scaleFilter=std::clamp(opt("scale_filter",2),0,2);
+ singlePresentMode=std::clamp(opt("single_present",1),0,1)!=0;
+ internalRenderWidth=std::clamp(opt("internal_render_width",0),0,8192);
+ internalRenderHeight=std::clamp(opt("internal_render_height",0),0,8192);
  forceNativeBuffer=(renderWidth!=0||renderHeight!=0);
  if(!renderWidth)renderWidth=monitorBounds.right-monitorBounds.left;if(!renderHeight)renderHeight=monitorBounds.bottom-monitorBounds.top;
  renderWidth=std::max(renderWidth,640);renderHeight=std::max(renderHeight,360);
  char exe[MAX_PATH]={};GetModuleFileNameA(nullptr,exe,MAX_PATH);const char* name=strrchr(exe,'\\');name=name?name+1:exe;
  strcpy_s(gameExeName,name);
- if(!_stricmp(name,"OROCHI_Z_TC.exe"))forceNativeBuffer=true;
+ if(isLegacyHighResolutionExecutable(name)&&(internalRenderWidth||internalRenderHeight||forceNativeBuffer||nativeResolution||scaleToFill)){
+  // DW4 Hyper / DW5 Special keep their own 1280x960 render target; only the
+  // borderless window and the controller/IME fixes apply. Their engine keeps
+  // UI and scene coordinates in the selected mode, so a larger backbuffer
+  // would crop or black out the picture.
+  logf("legacy resolution override refused for %s: D3D-only sizing would crop the scene; use the original game resolution",name);
+  internalRenderWidth=internalRenderHeight=0;forceNativeBuffer=false;nativeResolution=false;scaleToFill=false;
+ }
+#ifndef PADFIX_PLATFORM_ONLY
+ if(!_stricmp(name,"SW2.exe")){
+  sw2ResolutionInitialize();
+  logf("SW2 game-specific engine resolution/HUD worker started; generic D3D buffer override is disabled");
+ }
+#endif
+ if(!_stricmp(name,"OROCHI_Z_TC.exe")){
+  forceNativeBuffer=true;
+  if(windowMode&&internalRenderWidth>=640&&internalRenderHeight>=360){
+   renderWidth=internalRenderWidth;renderHeight=internalRenderHeight;
+   nativeResolution=false;scaleToFill=false;
+   logf("Orochi Z independent engine render=%dx%d; primary swapchain desktop presentation",renderWidth,renderHeight);
+  }
+ }
  if(imeIsolation){HMODULE imm=systemDll("imm32.dll");if(imm){disableIme=(decltype(disableIme))GetProcAddress(imm,"ImmDisableIME");associateIme=(decltype(associateIme))GetProcAddress(imm,"ImmAssociateContextEx");}
   // Some older Koei titles crash during pre-window startup while third-party
   // IME hooks are active. Disable IME at platform initialization as well as
   // immediately before main-window creation.
   if(disableIme)logf("ImmDisableIME during platform init result=%d",disableIme((DWORD)-1));
  }
- logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_filter=%u IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleFilter,imeIsolation,comCompatibility,quickClose,fpsLimit);
+ logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_aspect_mode=%d scale_filter=%u single_present=%d IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleAspectMode,scaleFilter,singlePresentMode,imeIsolation,comCompatibility,quickClose,fpsLimit);
  attachExistingMainWindow();
  if(windowMode||fpsLimit>0)attachLateD3DPresentHook();
 }
+// The inherited GS sprite format stores Y in unsigned 12.4 fixed point
+// with a 2048-pixel bias. A 2160-pixel bottom edge wraps to -1936.
+static void repairOrochiSpriteY(BYTE* sprite,unsigned kind) {
+ if(!sprite||internalRenderHeight<=2048)return;
+ unsigned offsets[4]={0x858,0x860,0x868,0x870};unsigned count=4;
+ if(kind==1){offsets[0]=0x858;offsets[1]=0x870;count=2;}
+ if(kind==2){offsets[0]=0x8a8;offsets[1]=0x8b0;offsets[2]=0x8b8;count=3;}
+ bool onScreen=false;for(unsigned i=0;i<count;i++){int y=*(int*)(sprite+offsets[i]);if(y>=0&&y<=internalRenderHeight)onScreen=true;}
+ if(!onScreen)return;
+ for(unsigned i=0;i<count;i++){int& y=*(int*)(sprite+offsets[i]);if(y<-1024&&y+4096>=0&&y+4096<=internalRenderHeight)y+=4096;}
+}
+static void __cdecl repairOrochiQuad(BYTE* s){repairOrochiSpriteY(s,0);}
+static void __cdecl repairOrochiRect(BYTE* s){repairOrochiSpriteY(s,1);}
+static void __cdecl repairOrochiTriangle(BYTE* s){repairOrochiSpriteY(s,2);}
+static bool installOrochiSpriteFix(BYTE* base) {
+ struct Site {DWORD rva;SIZE_T size;BYTE bytes[7];};
+ const Site sites[]={{0x1cd830,7,{0x56,0x8b,0x35,0x94,0x96,0x40,0x01}},{0x1cd8c0,5,{0x83,0xec,0x08,0x53,0x56}},{0x1cd630,5,{0x83,0xec,0x0c,0x53,0x55}}};
+ for(const auto& site:sites)if(memcmp(base+site.rva,site.bytes,site.size))return false;
+ BYTE* block=(BYTE*)VirtualAlloc(nullptr,192,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);if(!block)return false;
+ void* callbacks[]={(void*)repairOrochiRect,(void*)repairOrochiTriangle,(void*)repairOrochiQuad};
+ for(unsigned i=0;i<3;i++){
+  const auto& site=sites[i];BYTE* code=block+i*64;SIZE_T at=0;
+  code[at++]=0x9c;code[at++]=0x60;code[at++]=0x51;code[at++]=0xb8;DWORD callback=(DWORD)(uintptr_t)callbacks[i];memcpy(code+at,&callback,4);at+=4;
+  const BYTE invoke[]={0xff,0xd0,0x83,0xc4,4,0x61,0x9d};memcpy(code+at,invoke,sizeof(invoke));at+=sizeof(invoke);
+  memcpy(code+at,site.bytes,site.size);at+=site.size;code[at++]=0xe9;LONG back=(LONG)((base+site.rva+site.size)-(code+at+4));memcpy(code+at,&back,4);at+=4;
+  FlushInstructionCache(GetCurrentProcess(),code,at);
+  BYTE jump[7]={0xe9,0,0,0,0,0x90,0x90};LONG forward=(LONG)(code-(base+site.rva+5));memcpy(jump+1,&forward,4);
+  if(!replaceCode(base+site.rva,site.bytes,site.size,jump,site.size))return false;
+ }
+ DWORD old=0;VirtualProtect(block,192,PAGE_EXECUTE_READ,&old);
+ logf("Orochi GS sprite Y overflow fix installed for internal height=%d",internalRenderHeight);return true;
+}
 static void patchGraphics() {
  if(!windowMode||graphicsPatched)return;
- // The native resolution constants are specific to the inspected Orochi Z
- // build. Other games use the generic D3D9 CreateDevice/Reset hooks below.
+ // Orochi's engine needs the same config-driven resolution behavior, but its
+ // getters/globals differ from SM6TC's immediate sites and must be patched by
+ // this inspected-build path. Other games use the generic D3D9 hooks below.
  if(!nativeMenuMap)return;
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
  // Verify all getters before modifying any of them.
@@ -583,12 +1148,27 @@ static void patchGraphics() {
  for(auto r:getters)if(memcmp(base+r,"\x0f\xb6\x05",3))return;
  const BYTE modeCheck[]={0x83,0xec,0x10,0x55,0x8b,0x6c,0x24,0x1c};
  if(memcmp(base+0x1cafc0,modeCheck,sizeof(modeCheck)))return;
+ bool engineSizes=internalRenderWidth>=640&&internalRenderHeight>=360;
+ const BYTE sizeLookup[]={0x8b,0x44,0x24,0x04,0x83,0xf8};
+ const BYTE desktopCheck[]={0x8b,0x2d,0x74,0xc2,0x6c,0x00};
+ if(engineSizes){
+  for(DWORD r:{0x74470u,0x744d0u,0x74530u})if(memcmp(base+r,sizeLookup,sizeof(sizeLookup)))return;
+  if(memcmp(base+0x1cb8f3,desktopCheck,sizeof(desktopCheck)))return;
+ }
  bool ok=constantGetter(base,0x75d00,renderWidth)&&constantGetter(base,0x75d20,renderHeight)
   &&constantGetter(base,0x75d40,renderHeight)&&constantGetter(base,0x75d60,1);
  // Windowed buffers need not be physical fullscreen display modes. Actual
  // allocation/capability errors still come from Direct3D CreateDevice/Reset.
  const BYTE allowWindowedSize[]={0xb8,1,0,0,0,0xc2,8,0};
  ok=ok&&replaceCode(base+0x1cafc0,modeCheck,sizeof(modeCheck),allowWindowedSize,sizeof(allowWindowedSize));
+ if(ok&&engineSizes){
+  const DWORD lookups[]={0x74470,0x744d0,0x74530};
+  for(unsigned i=0;i<3;i++){BYTE code[]={0xb8,0,0,0,0,0xc3};int value=i?renderHeight:renderWidth;memcpy(code+1,&value,4);ok=replaceCode(base+lookups[i],sizeLookup,sizeof(sizeLookup),code,sizeof(code))&&ok;}
+  // A supersampled window render size need not fit the physical desktop.
+  const BYTE skipDesktopFallback[]={0xe9,0xa9,0,0,0,0x90};
+  ok=replaceCode(base+0x1cb8f3,desktopCheck,sizeof(desktopCheck),skipDesktopFallback,sizeof(skipDesktopFallback))&&ok;
+ }
+ if(ok&&engineSizes&&internalRenderHeight>2048)ok=installOrochiSpriteFix(base);
  if(ok){*(int*)(base+0x39fd74)=renderWidth;*(int*)(base+0x39fd78)=renderHeight;graphicsPatched=true;}
  logf("native render size getters %s %dx%d",ok?"patched":"FAILED",renderWidth,renderHeight);
 }
@@ -680,7 +1260,7 @@ static void attachExistingMainWindow() {
  EnumWindows(findExistingSW2Window,0);
 }
 static HWND WINAPI platformCreateWindow(DWORD ex,LPCSTR cls,LPCSTR title,DWORD style,int x,int y,int width,int height,HWND parent,HMENU menu,HINSTANCE inst,LPVOID param) {
- initializeAll();bool target=chooseMainWindowA(cls,title,parent);
+ initializeAll();patchSsm7Resolution();bool target=chooseMainWindowA(cls,title,parent);
  if(target){
   logApartment("before window");
   if(disableIme)logf("ImmDisableIME before main window result=%d",disableIme((DWORD)-1));
@@ -693,7 +1273,7 @@ static HWND WINAPI platformCreateWindow(DWORD ex,LPCSTR cls,LPCSTR title,DWORD s
  return h;
 }
 static HWND WINAPI platformCreateWindowW(DWORD ex,LPCWSTR cls,LPCWSTR title,DWORD style,int x,int y,int width,int height,HWND parent,HMENU menu,HINSTANCE inst,LPVOID param) {
- initializeAll();bool target=chooseMainWindowW(cls,title,parent);
+ initializeAll();patchSsm7Resolution();bool target=chooseMainWindowW(cls,title,parent);
  if(target){
   logApartment("before window");
   if(disableIme)logf("ImmDisableIME before main window result=%d",disableIme((DWORD)-1));
@@ -797,7 +1377,9 @@ static bool patchImport(const char* dllName,const char* functionName,void* hook,
  auto desc=(IMAGE_IMPORT_DESCRIPTOR*)(base+dir.VirtualAddress);
  for(;desc->Name;desc++) {
   const char* name=(const char*)(base+desc->Name);if(_stricmp(name,dllName)!=0)continue;
-  auto names=desc->OriginalFirstThunk?(IMAGE_THUNK_DATA*)(base+desc->OriginalFirstThunk):nullptr;
+  // Some packed builds share INT and IAT; the loader has already replaced
+  // their name RVAs with resolved addresses. Match those slots by API address.
+  auto names=desc->OriginalFirstThunk&&desc->OriginalFirstThunk!=desc->FirstThunk?(IMAGE_THUNK_DATA*)(base+desc->OriginalFirstThunk):nullptr;
   auto slots=(IMAGE_THUNK_DATA*)(base+desc->FirstThunk);
   FARPROC resolved=GetProcAddress(GetModuleHandleA(dllName),functionName);
   for(DWORD i=0;slots[i].u1.Function;i++) {

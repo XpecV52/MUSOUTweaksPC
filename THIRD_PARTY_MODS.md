@@ -17,3 +17,7 @@ SHA-256 identities of the supplied files:
 - `d3dx9_43.dll`: `2181441725535c2b205b162ce7b683fafd558dfbb52907707eae99b92c322093`
 - `Fix_for_SM6.dll`: `a8bb44c70d11e3d8305414301a2ab9157fa4558a23f7321603ea8e49b04fa20f`
 - `resolution_for_SM6TC.dll`: `bc24bd97a6a472683d03591fc79558e5fb294447a91d09ee32694c492e8b32f5`
+
+## SW2 resolution/HUD port
+
+The SW2 engine-resolution and HUD/menu implementation in `src/sw2resolution/` is derived from [SW2-Widescreen-Fix](https://github.com/idizKaneki/SW2-Widescreen-Fix) by idiz117, under the MIT License. Its license text is included alongside the source. The code is integrated into MUSOUTweaksPC's x86 `dinput8.dll`; no extra loader or sidecar DLL is required. The port reads the shared `SM2_Tweaks.ini`, waits for the protected game's code to decrypt in memory, and then patches the title-specific width/height functions and HUD rendering path. It is compiled and installed, but remains pending in-game confirmation on this installation; check `SM2Resolution.log` for width, height, camera and CreateDevice signatures before judging the result.

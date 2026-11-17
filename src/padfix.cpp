@@ -53,20 +53,27 @@ struct NativeAction { DWORD flags,combine; NativeBinding binding[2]; };
 struct NativeMap { NativeAction* actions; DWORD count; BYTE useDevice,padding[3]; DWORD device; };
 static_assert(sizeof(NativeBinding)==16&&sizeof(NativeAction)==40&&sizeof(NativeMap)==16);
 static NativeMap* nativeMenuMap;
+static NativeMap* nativeMenuMapCandidates[3];
+static unsigned nativeMenuMapCandidateCount;
+static bool nativeMenuMapAmbiguityLogged;
 static bool sameBinding(const NativeBinding& a,const NativeBinding& b) {
  return a.device==b.device&&a.axis==b.axis&&a.sign==b.sign&&a.object==b.object;
 }
+static bool writableMemory(void* ptr,SIZE_T bytes);
 // The menu map has keyboard arrows in slot 0 and an unused slot 1. Player
 // maps are separate allocations: never synthesize keyboard state to navigate.
-static bool patchMenuMap(NativeMap& map,bool& changed) {
- changed=false;
- if(!map.actions||map.count!=16)return false;
+static bool isMenuMap(const NativeMap& map) {
+ if(!map.actions||map.count!=16||!writableMemory(map.actions,4*sizeof(NativeAction)))return false;
  const int arrows[]={DIK_UP,DIK_DOWN,DIK_LEFT,DIK_RIGHT};
  for(int i=0;i<4;i++) {
   const auto& a=map.actions[i];NativeBinding dpad={};dpad.device=0;dpad.object=12+i;
   if(a.binding[0].device!=8||a.binding[0].object!=arrows[i])return false;
   if(a.binding[1].device!=10&&!sameBinding(a.binding[1],dpad))return false;
  }
+ return true;
+}
+static bool patchMenuMap(NativeMap& map,bool& changed) {
+ changed=false;if(!isMenuMap(map))return false;
  for(int i=0;i<4;i++) {
   NativeBinding dpad={};dpad.device=0;dpad.object=12+i;
   if(!sameBinding(map.actions[i].binding[1],dpad)){map.actions[i].binding[1]=dpad;changed=true;}
@@ -77,7 +84,9 @@ static bool writableMemory(void* ptr,SIZE_T bytes) {
  MEMORY_BASIC_INFORMATION m={};if(!VirtualQuery(ptr,&m,sizeof(m)))return false;
  if(m.State!=MEM_COMMIT||m.Protect&(PAGE_GUARD|PAGE_NOACCESS))return false;
  if(!(m.Protect&(PAGE_READWRITE|PAGE_WRITECOPY|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)))return false;
- return (BYTE*)ptr>=(BYTE*)m.BaseAddress&&bytes<=m.RegionSize-((BYTE*)ptr-(BYTE*)m.BaseAddress);
+ if((BYTE*)ptr<(BYTE*)m.BaseAddress)return false;
+ SIZE_T offset=(SIZE_T)((BYTE*)ptr-(BYTE*)m.BaseAddress);
+ return offset<=m.RegionSize&&bytes<=m.RegionSize-offset;
 }
 static void installMenuDpad();
 static void logf(const char* fmt,...) {
@@ -136,7 +145,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",1,iniPath)!=0;
  platformConfigure();
- logf("MUSOUTweaksPC 2.20 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.42 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -147,12 +156,12 @@ static void init() {
  triggerThreshold=std::clamp(opt("trigger_threshold",40),1,254);
  neutralMs=std::clamp(opt("neutral_ms",250),0,5000);
  backend=std::clamp(opt("backend",0),0,2);
- int dpadAsLeftStickSetting=std::clamp(opt("dpad_as_left_stick",-1),-1,1);
+ int dpadAsLeftStickSetting=std::clamp(opt("dpad_as_left_stick",0),-1,1);
  ds4RightX=std::clamp(opt("ds4_right_x",2),0,5);ds4RightY=std::clamp(opt("ds4_right_y",5),0,5);
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.20 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.42 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -171,7 +180,19 @@ static void init() {
     nt->OptionalHeader.SizeOfImage>0x2e07c4+sizeof(NativeMap)&&!memcmp(base+0x1dd40,ss4MenuInit,sizeof(ss4MenuInit))) {
   nativeMenuMap=(NativeMap*)(base+0x2e07c4);logf("SS4 native menu map signature matched");
  }
- if(!nativeMenuMap)logf("native menu map unavailable for this EXE; D-pad POV remains available by configuration");
+ const BYTE sm3Map0[]={0x83,0xec,0x28,0x6a,0x10,0xb9,0x00,0x9d,0xa3,0x00};
+ const BYTE sm3Map2[]={0x83,0xec,0x28,0x6a,0x10,0xb9,0x20,0x9d,0xa3,0x00};
+ const BYTE sm3Map1[]={0x6a,0x10,0xb9,0x10,0x9d,0xa3,0x00};
+ if(!nativeMenuMap&&!_stricmp(name,"ShinSangokumusou3.exe")&&nt->OptionalHeader.SizeOfImage>0x639d20+sizeof(NativeMap)&&
+    !memcmp(base+0x1585a0,sm3Map0,sizeof(sm3Map0))&&!memcmp(base+0x1587c0,sm3Map2,sizeof(sm3Map2))&&
+    !memcmp(base+0x1589d8,sm3Map1,sizeof(sm3Map1))) {
+  nativeMenuMapCandidates[0]=(NativeMap*)(base+0x639d00);
+  nativeMenuMapCandidates[1]=(NativeMap*)(base+0x639d10);
+  nativeMenuMapCandidates[2]=(NativeMap*)(base+0x639d20);
+  nativeMenuMapCandidateCount=3;
+  logf("SSM3 mapping-table build signature matched; menu table will be selected by live binding fingerprint");
+ }
+ if(!nativeMenuMap&&!nativeMenuMapCandidateCount)logf("native menu map unavailable for this EXE; D-pad buttons and POV remain available");
  platformConfigure();
  dpadAsLeftStick=dpadAsLeftStickSetting<0?!_stricmp(gameExeName,"ShinSangokumusou3.exe"):dpadAsLeftStickSetting;
  logf("D-pad to left-stick bridge=%d",dpadAsLeftStick);
@@ -179,11 +200,24 @@ static void init() {
 }
 static void initializeAll(){static std::once_flag once;std::call_once(once,[]{init();});}
 static void installMenuDpad() {
- if(!menuNavigation||!nativeMenuMap)return;
+ if(!menuNavigation)return;
+ if(!nativeMenuMap&&nativeMenuMapCandidateCount){
+  NativeMap* match=nullptr;unsigned matches=0;
+  for(unsigned i=0;i<nativeMenuMapCandidateCount;i++){
+   NativeMap* candidate=nativeMenuMapCandidates[i];
+   if(writableMemory(candidate,sizeof(*candidate))&&isMenuMap(*candidate)){match=candidate;matches++;}
+  }
+  if(matches!=1){
+   if(matches>1&&!nativeMenuMapAmbiguityLogged){nativeMenuMapAmbiguityLogged=true;logf("SSM3 menu map selection rejected: %u tables matched; no player map changed",matches);}
+   return;
+  }
+  nativeMenuMap=match;logf("SSM3 native menu map selected by binding fingerprint: %p",nativeMenuMap);
+ }
+ if(!nativeMenuMap)return;
  if(!writableMemory(nativeMenuMap,sizeof(*nativeMenuMap))||nativeMenuMap->count!=16)return;
  if(!writableMemory(nativeMenuMap->actions,4*sizeof(NativeAction)))return;
  bool changed=false;
- if(patchMenuMap(*nativeMenuMap,changed)&&changed)logf("native menu D-pad installed: map=2 actions=0..3 buttons=13..16; player maps untouched");
+ if(patchMenuMap(*nativeMenuMap,changed)&&changed)logf("native menu D-pad installed: actions=0..3 buttons=13..16; player maps untouched");
 }
 struct PadState { LONG x=0,y=0; BYTE buttons[20]={}; WORD dpad=0; };
 static int selectedSlot=-1;
