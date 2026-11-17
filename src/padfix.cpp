@@ -35,6 +35,25 @@ static volatile LONG lastDpadBits=0;
 // Keyboard arrows the adapter is currently reporting as pressed on behalf of the
 // D-pad. The real keyboard device is shared, so only ever OR bits in.
 static WORD arrowSent=0;
+// Buttons that also press the keyboard Enter key. Some Koei UI screens accept
+// nothing but a keyboard confirm (Orochi Z's story select, and the popup that
+// appears when a second player joins), so the pad has to deliver Enter for them.
+// Bitmask over buttonMasks; -1 means auto (B + Start/Menu for Orochi Z).
+// How it reaches the game:
+//   1 = press Enter on the game's own DirectInput keyboard device (the game has
+//       to poll that device for this to work);
+//   2 = post WM_KEYDOWN/WM_CHAR/WM_KEYUP to the game window;
+//   3 = SendInput, i.e. inject at the same layer as a physical key press so the
+//       system itself delivers WM_KEYDOWN/WM_CHAR to the focused window.
+// Orochi Z never polls its keyboard device and ignored posted window messages,
+// so it uses 3: the OS-generated message is indistinguishable from a real Enter.
+// -1 = auto.
+static int padEnterMode=-1;
+static int padEnterButtons=-1, enterPulseMs=60;
+static ULONGLONG enterPulseUntil=0, enterKeyUpAt=0;
+static bool enterWasDown=false, enterSent=false;
+// Raw pad buttons of the last sample, read by the Enter helpers.
+static volatile LONG lastPadButtons=0;
 static const BYTE arrowDik[4]={DIK_UP,DIK_DOWN,DIK_LEFT,DIK_RIGHT};
 static WORD dpadBridgeLast=0;
 static ULONGLONG dpadBridgeUntil=0;
@@ -137,23 +156,42 @@ static WORD arrowDesired() {
  if(bits&XINPUT_GAMEPAD_DPAD_RIGHT)out|=8;
  return out;
 }
+// A menu confirm must be a single press, not a held key, so a mapped button
+// produces a fixed-length Enter pulse on its rising edge.
+static bool enterDesired() {
+ if(padEnterMode!=1||!padEnterButtons)return false;
+ WORD buttons=(WORD)lastPadButtons;bool down=false;
+ for(int i=0;i<10;i++)if((padEnterButtons&(1<<i))&&(buttons&buttonMasks[i])){down=true;break;}
+ ULONGLONG now=GetTickCount64();
+ if(down&&!enterWasDown){enterWasDown=true;enterPulseUntil=now+(ULONGLONG)enterPulseMs;}
+ else if(!down)enterWasDown=false;
+ return now<enterPulseUntil;
+}
 // Polled path: the game re-reads the full 256-byte keyboard state every frame,
 // so simply adding the pressed bit is enough and releasing the D-pad releases
 // the key. Bits are never cleared, so a physically held arrow keeps working.
 static void mergeArrowKeys(BYTE* keys) {
- WORD want=arrowDesired();if(!want)return;
- static bool logged=false;
- if(!logged){logged=true;logf("D-pad arrow-key injection active on the shared keyboard");}
- if(want&1)keys[DIK_UP]|=0x80;
- if(want&2)keys[DIK_DOWN]|=0x80;
- if(want&4)keys[DIK_LEFT]|=0x80;
- if(want&8)keys[DIK_RIGHT]|=0x80;
+ WORD want=arrowDesired();
+ if(want){
+  static bool logged=false;
+  if(!logged){logged=true;logf("D-pad arrow-key injection active on the shared keyboard");}
+  if(want&1)keys[DIK_UP]|=0x80;
+  if(want&2)keys[DIK_DOWN]|=0x80;
+  if(want&4)keys[DIK_LEFT]|=0x80;
+  if(want&8)keys[DIK_RIGHT]|=0x80;
+ }
+ if(enterDesired()){
+  static bool enterLogged=false;
+  if(!enterLogged){enterLogged=true;logf("pad Enter injection active on the shared keyboard");}
+  keys[DIK_RETURN]|=0x80;
+ }
 }
 // Buffered path: the game only sees transitions, so a key-down/key-up pair has
 // to be appended to whatever the real keyboard already reported.
 static void appendArrowEvents(LPDIDEVICEOBJECTDATA ptr,DWORD* count,DWORD capacity,DWORD flags) {
  WORD want=arrowDesired();WORD changed=(WORD)(want^arrowSent);
- if(!changed)return;
+ bool enterNow=enterDesired();bool enterChanged=enterNow!=enterSent;
+ if(!changed&&!enterChanged)return;
  DWORD have=*count,room=capacity>have?capacity-have:0;
  if(!room)return;
  DWORD written=0;WORD applied=0;
@@ -165,12 +203,21 @@ static void appendArrowEvents(LPDIDEVICEOBJECTDATA ptr,DWORD* count,DWORD capaci
   if(ptr)ptr[have+written]=e;
   written++;applied|=bit;
  }
+ if(enterChanged&&written<room){
+  DIDEVICEOBJECTDATA e={};e.dwOfs=DIK_RETURN;e.dwData=enterNow?0x80:0;
+  e.dwTimeStamp=GetTickCount();
+  if(ptr)ptr[have+written]=e;
+  written++;
+  if(!(flags&DIGDD_PEEK))enterSent=enterNow;
+  static bool enterLogged=false;
+  if(!enterLogged){enterLogged=true;logf("pad Enter events queued on the buffered keyboard down=%d",(int)enterNow);}
+ }
  // A peek must not consume the transition, otherwise the following real read
  // never reports the press the game is waiting for.
  if(!(flags&DIGDD_PEEK))arrowSent=(WORD)((arrowSent&~applied)|(want&applied));
  *count=have+written;
  static bool logged=false;
- if(!logged){logged=true;logf("D-pad arrow-key events queued on the buffered keyboard: bits=%x",want);}
+ if(!logged&&changed){logged=true;logf("D-pad arrow-key events queued on the buffered keyboard: bits=%x",want);}
 }
 static HMODULE systemDll(const char* name) {
  char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH);strcat_s(path,"\\");strcat_s(path,name);
@@ -296,6 +343,15 @@ static void init() {
   ||!_stricmp(gameExeName,"SM5_WIN.exe");
  dpadArrowKeys=dpadArrowKeysSetting<0?(arrowDefault?1:0):dpadArrowKeysSetting;
  logf("D-pad arrow-key synthesis=%d",dpadArrowKeys);
+ // B (bit1) and Start/Menu (bit7) press Enter by default for Orochi Z. Every
+ // other title keeps this off: a stray Enter during play is not harmless there.
+ int padEnterSetting=opt("pad_enter_buttons",-1);
+ bool enterDefault=!_stricmp(gameExeName,"OROCHI_Z_TC.exe");
+ padEnterButtons=padEnterSetting<0?(enterDefault?((1<<1)|(1<<7)):0):std::clamp(padEnterSetting,0,1023);
+ enterPulseMs=std::clamp(opt("pad_enter_pulse_ms",60),10,500);
+ int padEnterModeSetting=std::clamp(opt("pad_enter_mode",-1),-1,3);
+ padEnterMode=padEnterModeSetting<0?(enterDefault?3:1):padEnterModeSetting;
+ logf("pad Enter buttons=%x pulse=%dms mode=%d",padEnterButtons,enterPulseMs,padEnterMode);
  logf("D-pad to left-stick bridge=%d",dpadAsLeftStick);
 #endif
 }
@@ -367,9 +423,63 @@ static WORD dpadHoldRepeat(WORD raw) {
  }
  return raw;
 }
+// Hardware-level injection. SendInput feeds the input stack, so Windows builds
+// the WM_KEYDOWN/WM_CHAR/WM_KEYUP pair itself and posts it to the focused window
+// with a real scan code and a real key-state transition. That is the only path
+// that also satisfies a window procedure which re-reads the OS keyboard state
+// instead of trusting the message parameters.
+static void sendEnterKey(bool down) {
+ INPUT in={};in.type=INPUT_KEYBOARD;in.ki.wVk=VK_RETURN;
+ in.ki.wScan=(WORD)(MapVirtualKeyA(VK_RETURN,MAPVK_VK_TO_VSC)&0xff);
+ in.ki.dwFlags=KEYEVENTF_SCANCODE|(down?0:KEYEVENTF_KEYUP);
+ UINT sent=SendInput(1,&in,sizeof(in));
+ static int logged=-1;
+ if(logged!=(int)down){logged=(int)down;logf("pad Enter SendInput %s sent=%u err=%lu",down?"down":"up",sent,GetLastError());}
+}
+// Window-message path. Koei ports of this era handle WM_KEYDOWN on the game
+// window, which is why synthesised input from outside has to go through
+// PostMessage as well. One Enter press per physical button press: the three
+// messages are queued back to back, so the game sees a complete down/char/up
+// triple.
+static void maybePostEnter(WORD buttons) {
+ if(padEnterMode!=2||!padEnterButtons)return;
+ bool down=false;
+ for(int i=0;i<10;i++)if((padEnterButtons&(1<<i))&&(buttons&buttonMasks[i])){down=true;break;}
+ if(!down){enterWasDown=false;return;}
+ if(enterWasDown)return;
+ enterWasDown=true;
+ HWND target=gameWindow?gameWindow:GetForegroundWindow();
+ if(!target){logf("pad Enter: no window to post to");return;}
+ const LPARAM scan=(LPARAM)((MapVirtualKeyA(VK_RETURN,MAPVK_VK_TO_VSC)&0xff)<<16);
+ BOOL a=PostMessageA(target,WM_KEYDOWN,VK_RETURN,0x00000001|scan);
+ BOOL b=PostMessageA(target,WM_CHAR,VK_RETURN,0x00000001|scan);
+ BOOL c=PostMessageA(target,WM_KEYUP,VK_RETURN,(LPARAM)0xC0000001|scan);
+ static bool logged=false;
+ if(!logged){logged=true;logf("pad Enter posted to hwnd=%p as WM_KEYDOWN/WM_CHAR/WM_KEYUP ok=%d/%d/%d err=%lu",target,a,b,c,GetLastError());}
+}
+// SendInput path. A menu confirm must be a pulse, not a held key, so the press
+// is released enterPulseMs later from the following sample instead of blocking
+// the render thread with a sleep.
+static void maybeSendEnter(WORD buttons) {
+ if(padEnterMode!=3||!padEnterButtons)return;
+ bool down=false;
+ for(int i=0;i<10;i++)if((padEnterButtons&(1<<i))&&(buttons&buttonMasks[i])){down=true;break;}
+ ULONGLONG now=GetTickCount64();
+ if(down&&!enterWasDown){
+  enterWasDown=true;
+  if(!enterKeyUpAt){sendEnterKey(true);enterKeyUpAt=now+(ULONGLONG)enterPulseMs;}
+ }
+ if(!down)enterWasDown=false;
+ if(enterKeyUpAt&&now>=enterKeyUpAt){enterKeyUpAt=0;sendEnterKey(false);}
+}
+// Never leave the synthetic key stuck down when the pad drops out or the window
+// stops being the foreground one mid-pulse.
+static void releaseEnterKey() {
+ if(enterKeyUpAt){enterKeyUpAt=0;sendEnterKey(false);}
+}
 static PadState sample() {
  std::lock_guard<std::recursive_mutex> lock(mutex);
- lastDpadBits=0;
+ lastDpadBits=0;lastPadButtons=0;
  PadState out; XINPUT_STATE s={}; bool connected=false;
  if(getXState&&backend!=2&&selectedBackend!=2) {
   if(slotConfig>=0){selectedSlot=slotConfig;connected=getXState(selectedSlot,&s)==ERROR_SUCCESS;}
@@ -389,7 +499,7 @@ static PadState sample() {
  if(connected!=wasConnected){logf("controller %s backend=%s slot=%d",connected?"connected":"disconnected",selectedBackend==2?"DS4":"XInput",selectedSlot);wasConnected=connected;}
  if(!connected||!fg||!wasForeground){armed=false;neutralPending=false;}
  wasForeground=fg;
- if(!connected||!fg)return out;
+ if(!connected||!fg){releaseEnterKey();return out;}
  auto& g=s.Gamepad;
  WORD dpad=g.wButtons&15;if(dpad!=loggedDpad){loggedDpad=dpad;logf("controller D-pad bits=%x backend=%s",dpad,selectedBackend==2?"DS4":"XInput");}
  int dz=leftDeadzone*32767/100, rt=rightThreshold*32767/100;
@@ -403,6 +513,11 @@ static PadState sample() {
   armed=true;logf("controller armed after neutral");
  }
  auto axis=[dz](int v)->LONG {if(abs(v)<=dz)return 0;return std::clamp(v,-32767,32767)*255/32767;};
+ // Published for the Enter helpers, and the window-message path runs right here
+ // because this is the call the game makes every frame.
+ lastPadButtons=(LONG)g.wButtons;
+ maybePostEnter(g.wButtons);
+ maybeSendEnter(g.wButtons);
  out.x=axis(g.sThumbLX);out.y=-axis(g.sThumbLY);
  // Right stick keeps the deadzone so a resting stick never pans the camera.
  out.rx=axis(g.sThumbRX);out.ry=-axis(g.sThumbRY);

@@ -1,4 +1,4 @@
-# 发布产物
+﻿# 发布产物
 
 面向玩家的发布包**只放在 GitHub Releases**，仓库里不再保存任何 zip。
 
@@ -13,7 +13,13 @@
 | `v1.0.1` | `MUSOUTweaksPC_V1.0.1.zip` | 1091191 | `a03d7b92ecd4d5292b52c93d3ec03ae3b627f83caf22b6b8b15a0b882f078648` |
 | `v1.0.2` | `MUSOUTweaksPC_V1.0.2.zip` | 1245363 | `191254f769cac0ea19447271935d4e11d0e217679e6f7ffb8864d49c3963de97` |
 
-`v1.0.1` 对应内部构建 **2.45**、`v1.0.2` 对应 **2.46**（dll 日志横幅里打印的是构建号 `MUSOUTweaksPC 2.46`，不是发布号）。
+`v1.0.1` 对应内部构建 **2.45**、`v1.0.2` 对应 **2.46**、`v1.0.3` 对应 **2.47**（dll 日志横幅里打印的是构建号 `MUSOUTweaksPC 2.47`，不是发布号）。
+
+**2.47 尚未发布**，本地构建已可用。主要内容：
+
+- 无双蛇魔 Z：`internal_render_width` / `internal_render_height` 默认改为跟随桌面分辨率。引擎精灵坐标是 12.4 定点数，高度超过 2048 即溢出，补丁会被迫启用精灵 Y 修补与背景深度写入修补，两者叠加会破坏图层顺序（选择故事/列传多出背景层、兵营整屏发白、loading 只剩底色、即时演算字幕消失）。
+- 无双蛇魔 Z：新增 `orochi_depth_fix`（0/1/2）。
+- 无双蛇魔 Z：手柄 B / OPTION 等同键盘 Enter，新增 `pad_enter_buttons` / `pad_enter_mode` / `pad_enter_pulse_ms`。该作不读 DirectInput 键盘设备、也不认 `PostMessage`，只有 `SendInput` 生成的系统级键消息能被识别。
 
 ## 支持的游戏版本
 
@@ -32,8 +38,8 @@
 发布流程：
 
 ```powershell
-python release.py                  # 生成 _rel\MUSOUTweaksPC_V1.0.2.zip + 七个子包 + NOTES_V1.0.2.md
-python publish.py V1.0.2 --notes _rel\NOTES_V1.0.2.md
+python release.py                  # 生成 _rel\MUSOUTweaksPC_V1.0.3.zip + 七个子包 + NOTES_V1.0.3.md
+python publish.py V1.0.3 --notes _rel\NOTES_V1.0.3.md
 ```
 
 `publish.py` 走 `api.github.com`（本机 `gh` 不可用），token 取自 git 凭据助手；同名 asset 会先删再传，所以可以反复跑。

@@ -108,6 +108,11 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.47
+- **无双蛇魔 Z：修复高分辨率下整屏图层错乱**。引擎的精灵坐标是 12.4 定点数，内部渲染高度超过 2048 就会溢出，补丁被迫启用「精灵 Y 溢出修补」和「背景四边形深度写入 hack」两套补丁；两者叠加后，铺满后备缓冲的背景四边形会按 `D3DCMP_LESSEQUAL` 把后面所有 `z>0` 的层判死，表现为：选择故事/列传多出不该有的背景层、兵营界面整屏发白多层叠加、loading 只剩余底色、即时演算字幕消失。现在 `internal_render_width` / `internal_render_height` 默认跟随桌面分辨率（`0`/`0`），配置说明里写明 **2048 是红线**，超过即触发上述修补。
+- 新增 `orochi_depth_fix`：背景四边形深度写入的处理方式，`0` 完全不改、`1` 每帧所有全屏四边形都禁止写入（旧行为）、`2` 只禁止每帧第一个（默认）。仅在内部渲染高度 > 2048 时才生效。
+- **无双蛇魔 Z：手柄 B 键 / OPTION 键等同键盘 Enter**。选择故事、列传等界面以及「2P 加入」弹窗只接受键盘确认，手柄原来完全无响应。新增 `pad_enter_buttons`（默认 `0x82` = B + OPTION）、`pad_enter_mode`（默认 `3` = `SendInput`）、`pad_enter_pulse_ms`（默认 `60`）。该作不读 DirectInput 键盘设备、也不认 `PostMessage` 投递的窗口消息，只有 `SendInput` 走系统输入栈生成的 `WM_KEYDOWN`/`WM_CHAR`/`WM_KEYUP` 才能被识别。
+
 ### 2.46
 - **新增真三国无双5（`SM5_WIN.exe`）支持**，配置文件 `SSM5_Tweaks.ini`。该作的手柄列表按**产品名白名单**过滤，名单外的设备能被枚举但不会被选中，所以虚拟手柄默认报成 `Controller (XBOX 360 For Windows)`（新配置项 `pad_name`）。
 - 虚拟 DirectInput 设备新增 `pad_axes`：`2` 维持原来的「只有左摇杆」，`6` 额外暴露 Z（左扳机）、Rx/Ry（右摇杆）、Rz（右扳机）。真三5 默认 `6`，因为该作用右摇杆转视角。其他作品默认仍是 `2`，行为不变。
@@ -132,7 +137,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.46**，对外发布版本 **V1.0.1**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.47**，对外发布版本 **V1.0.2**（2.47 尚未发布）。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -246,6 +251,11 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Changelog
 
+### 2.47
+- **Musou Orochi Z: fixed the whole-screen layering break at high resolutions.** The engine stores sprite coordinates as 12.4 fixed point, so an internal render height above 2048 overflows and the patch is forced to enable both the sprite-Y overflow repair and the background-quad depth-write hack. Together they make the background quad, now stretched over the whole backbuffer, reject every later layer with `z>0` under `D3DCMP_LESSEQUAL`: story/legend select shows a stray background layer, the camp menu is washed out by stacked layers, loading shows nothing but the base colour, and cutscene subtitles disappear. `internal_render_width` / `internal_render_height` now default to the desktop resolution (`0`/`0`) and the option reference states that **2048 is the hard limit** above which those repairs kick in.
+- New `orochi_depth_fix`: how the background quad's depth write is treated — `0` leaves it alone, `1` removes it from every full-screen quad (the old behaviour), `2` removes it from the first one of each frame only (default). Only applies when the internal render height is above 2048.
+- **Musou Orochi Z: pad B / OPTION now presses the keyboard Enter key.** The story select, the legend screens and the "2P JOINED" popup accept nothing but a keyboard confirm, and the pad used to do nothing there. New `pad_enter_buttons` (default `0x82` = B + OPTION), `pad_enter_mode` (default `3` = `SendInput`) and `pad_enter_pulse_ms` (default `60`). This title does not poll its DirectInput keyboard device and ignores posted window messages, so only the `WM_KEYDOWN`/`WM_CHAR`/`WM_KEYUP` that Windows itself generates from `SendInput` is recognised.
+
 ### 2.46
 - **New: Dynasty Warriors 6 (`SM5_WIN.exe`)** with its own `SSM5_Tweaks.ini`. This port filters controllers by **product name**, so a device whose name is not on the game's whitelist is enumerated but never selected. The virtual pad therefore reports itself as `Controller (XBOX 360 For Windows)` (new `pad_name` option).
 - The virtual DirectInput device gained `pad_axes`: `2` keeps the original left-stick-only layout, `6` also exposes Z (left trigger), Rx/Ry (right stick) and Rz (right trigger). DW6 defaults to `6` because it steers the camera with the right stick; every other title stays on `2` and behaves exactly as before.
@@ -270,4 +280,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.46**; public release: **V1.0.1**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.47**; public release: **V1.0.2** (2.47 not released yet). Package names, sizes and SHA-256 are listed in `RELEASES.md`.

@@ -23,6 +23,17 @@ static void patchSsm7Camera();
 static void patchOrochiCamera();
 static void pollCameraHotkeys();
 static bool nativeResolution=false,scaleToFill=false;
+// How the full-screen GS background quad is treated on high internal render
+// sizes. Its depth write has to go away, otherwise the enlarged quad fills the
+// depth buffer and everything drawn after it (3D scene, loading text) vanishes.
+// The trap is that a frame can contain several full-screen quads: cross-fade and
+// dim overlays are full-screen too, and taking their depth write away makes
+// every layer of the transition show at once, which reads as a washed-out
+// double exposure. Only the first full-screen quad of a frame is the background.
+// 0 = never touch it, 1 = any full-screen quad (pre-2.47 behaviour),
+// 2 = first full-screen quad of each frame only (default).
+static int orochiDepthFix=2;
+static volatile LONG orochiBackgroundTaken=0;
 // A third-party overlay (Steam's gameoverlayrenderer, RTSS) can re-wrap the
 // device table around our hooks, so the wrapper chain may call us again while
 // we are already inside the same hook. Without a guard that becomes unbounded
@@ -571,7 +582,14 @@ static void captureFrameIfRequested(IDirect3DDevice9* d) {
  char* slash=strrchr(dir,'\\');if(!slash)return;slash[1]=0;
  char flag[MAX_PATH]={},out[MAX_PATH]={};
  strcpy_s(flag,dir);strcat_s(flag,"MUSOUTweaksPC_capture.flag");
- if(GetFileAttributesA(flag)==INVALID_FILE_ATTRIBUTES)return;
+ bool requested=GetFileAttributesA(flag)!=INVALID_FILE_ATTRIBUTES;
+ // F11 grabs the frame the game is showing right now, which is a lot easier than
+ // alt-tabbing out to create the flag file while the interesting screen is up.
+ if(!requested&&(GetAsyncKeyState(VK_F11)&0x8000)){
+  requested=true;
+  logf("capture: F11 pressed");
+ }
+ if(!requested)return;
  DeleteFileA(flag);
  strcpy_s(out,dir);strcat_s(out,"MUSOUTweaksPC_frame.bmp");
  IDirect3DSurface9* back=nullptr;
@@ -630,6 +648,8 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
  if(presentReentry){reportReentry("Present");return D3D_OK;}
  ReentryGuard guard(presentReentry);
  pollCameraHotkeys();
+ // The frame is complete: the next frame gets a fresh background slot.
+ InterlockedExchange(&orochiBackgroundTaken,0);
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,const RECT*,const RECT*,HWND,const RGNDATA*))originalMethod(d,17);
  bool firstParameters=false;{std::lock_guard<std::mutex> lock(tableMutex);firstParameters=loggedPrimaryPresentParameters.insert(d).second;}
  if(firstParameters)logf("D3D primary Present parameters source=%d [%ld,%ld,%ld,%ld] destination=%d [%ld,%ld,%ld,%ld] dirty=%d",source!=nullptr,source?source->left:0,source?source->top:0,source?source->right:0,source?source->bottom:0,destination!=nullptr,destination?destination->left:0,destination?destination->top:0,destination?destination->right:0,destination?destination->bottom:0,dirty!=nullptr);
@@ -664,12 +684,29 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
 // A repaired full-screen GS background at z=0 must not fill the depth
 // buffer and hide later 3D maps/loading/results. Preserve depth testing for
 // every draw; disable only depth writes on the identified background quad.
+// A frame can hold several full-screen quads though (cross-fade and dim
+// overlays are full-screen as well), so with orochi_depth_fix=2 only the first
+// one of a frame counts as the background and keeps its depth write removed;
+// the overlays that follow keep theirs, which is what holds the transition
+// layers apart.
+struct OrochiQuadSig { int l,t,r,b;DWORD blend,ztest,zfunc;UINT num,count; };
+static OrochiQuadSig orochiQuadSigs[40];
+static int orochiQuadSigCount=0;
+static bool orochiQuadSigNew(const OrochiQuadSig& s) {
+ for(int i=0;i<orochiQuadSigCount;i++){
+  const OrochiQuadSig& o=orochiQuadSigs[i];
+  if(o.l==s.l&&o.t==s.t&&o.r==s.r&&o.b==s.b&&o.blend==s.blend&&o.ztest==s.ztest&&o.zfunc==s.zfunc&&o.num==s.num&&o.count==s.count)return false;
+ }
+ if(orochiQuadSigCount>=40)return false;
+ orochiQuadSigs[orochiQuadSigCount++]=s;return true;
+}
 static HRESULT WINAPI orochiDrawIndexedPrimitive(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,INT base,UINT min,UINT num,UINT start,UINT count) {
  if(drawReentry){reportReentry("DrawIndexedPrimitive");return D3D_OK;}
  ReentryGuard guard(drawReentry);
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,INT,UINT,UINT,UINT,UINT))originalMethod(d,82);if(!fn)return D3DERR_INVALIDCALL;
  DWORD fvf=0;bool background=false;
- if(num==4&&count==2&&SUCCEEDED(d->GetFVF(&fvf))&&(fvf&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW){
+ d->GetFVF(&fvf);
+ if(num==4&&count==2&&(fvf&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW){
   IDirect3DVertexBuffer9* buffer=nullptr;UINT offset=0,stride=0;
   if(SUCCEEDED(d->GetStreamSource(0,&buffer,&offset,&stride))&&buffer){
    void* data=nullptr;const LONGLONG first=(LONGLONG)base+min;
@@ -680,16 +717,33 @@ static HRESULT WINAPI orochiDrawIndexedPrimitive(IDirect3DDevice9* d,D3DPRIMITIV
      left=std::min(left,v[0]);right=std::max(right,v[0]);top=std::min(top,v[1]);bottom=std::max(bottom,v[1]);
      if(v[2]!=0.0f)zeroDepth=false;
     }
-    background=zeroDepth&&left<=0.0f&&top<=0.0f&&right>=renderWidth-1.0f&&bottom>=renderHeight-1.0f;
+    bool fullscreen=zeroDepth&&left<=0.0f&&top<=0.0f&&right>=renderWidth-1.0f&&bottom>=renderHeight-1.0f;
+    if(fullscreen){
+     if(orochiDepthFix==1)background=true;
+     else if(orochiDepthFix==2&&!orochiBackgroundTaken){
+      // First full-screen quad of this frame: the background. Later ones are
+      // overlays and must keep writing depth.
+      background=true;InterlockedExchange(&orochiBackgroundTaken,1);
+     }
+    }
+    DWORD blend=FALSE,ztest=D3DZB_TRUE,zfunc=0;
+    d->GetRenderState(D3DRS_ALPHABLENDENABLE,&blend);
+    d->GetRenderState(D3DRS_ZENABLE,&ztest);
+    d->GetRenderState(D3DRS_ZFUNC,&zfunc);
+    OrochiQuadSig sig={(int)left,(int)top,(int)right,(int)bottom,blend,ztest,zfunc,num,count};
+    if(orochiQuadSigNew(sig))
+     logf("Orochi quad %ux%u fvf=%08lx z=%s extent=%d,%d..%d,%d blend=%lu ztest=%lu zfunc=%lu target=%dx%d -> background=%d",
+      num,count,fvf,zeroDepth?"zero":"nonzero",sig.l,sig.t,sig.r,sig.b,blend,ztest,zfunc,renderWidth,renderHeight,(int)background);
     buffer->Unlock();
    }
    buffer->Release();
   }
  }
  DWORD writes=FALSE;
- if(background&&SUCCEEDED(d->GetRenderState(D3DRS_ZWRITEENABLE,&writes))&&writes)d->SetRenderState(D3DRS_ZWRITEENABLE,FALSE);
+ bool fixDepth=background;
+ if(fixDepth&&SUCCEEDED(d->GetRenderState(D3DRS_ZWRITEENABLE,&writes))&&writes)d->SetRenderState(D3DRS_ZWRITEENABLE,FALSE);
  HRESULT hr=fn(d,type,base,min,num,start,count);
- if(background&&writes)d->SetRenderState(D3DRS_ZWRITEENABLE,writes);
+ if(fixDepth&&writes)d->SetRenderState(D3DRS_ZWRITEENABLE,writes);
  return hr;
 }
 static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE type,HWND focus,DWORD flags,D3DPRESENT_PARAMETERS* p,IDirect3DDevice9** out) {
@@ -1162,6 +1216,7 @@ static void platformConfigure() {
  frameCapture=opt("frame_capture",0)!=0;
  internalRenderWidth=std::clamp(opt("internal_render_width",0),0,8192);
  internalRenderHeight=std::clamp(opt("internal_render_height",0),0,8192);
+ orochiDepthFix=std::clamp(opt("orochi_depth_fix",2),0,2);
  forceNativeBuffer=(renderWidth!=0||renderHeight!=0);
  if(!renderWidth)renderWidth=monitorBounds.right-monitorBounds.left;if(!renderHeight)renderHeight=monitorBounds.bottom-monitorBounds.top;
  renderWidth=std::max(renderWidth,640);renderHeight=std::max(renderHeight,360);
@@ -1268,7 +1323,19 @@ static void patchGraphics() {
  if(ok){*(int*)(base+0x39fd74)=renderWidth;*(int*)(base+0x39fd78)=renderHeight;graphicsPatched=true;}
  logf("native render size getters %s %dx%d",ok?"patched":"FAILED",renderWidth,renderHeight);
 }
+// Diagnostic for the pad-Enter injection. A real Enter press and an injected one
+// both land here when the game reads its keyboard through the message loop, so
+// counting the arrivals is what tells us which delivery path a title honours.
+// Capped so a long session cannot fill the log with key traffic.
+static int keyMsgSeen=0;
+static void logKeyMessage(UINT message,WPARAM w,LPARAM l) {
+ if(message!=WM_KEYDOWN&&message!=WM_CHAR&&message!=WM_KEYUP&&message!=WM_SYSKEYDOWN&&message!=WM_SYSCHAR)return;
+ if(keyMsgSeen>=24)return;
+ keyMsgSeen++;
+ logf("window key message %u wparam=%02x lparam=%08lx (#%d)",message,(unsigned)w,(unsigned long)l,keyMsgSeen);
+}
 static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM l) {
+ logKeyMessage(message,w,l);
  if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
   STYLESTRUCT* style=(STYLESTRUCT*)l;
   if(w==GWL_STYLE)style->styleNew=(style->styleNew&~(DWORD)WS_OVERLAPPEDWINDOW)|WS_POPUP;
@@ -1286,6 +1353,7 @@ static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM 
  return CallWindowProcA(gameWindowProc,h,message,w,l);
 }
 static LRESULT CALLBACK platformWindowProcW(HWND h,UINT message,WPARAM w,LPARAM l) {
+ logKeyMessage(message,w,l);
  if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
   STYLESTRUCT* style=(STYLESTRUCT*)l;
   if(w==GWL_STYLE)style->styleNew=(style->styleNew&~(DWORD)WS_OVERLAPPEDWINDOW)|WS_POPUP;
