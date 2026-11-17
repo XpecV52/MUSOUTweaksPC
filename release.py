@@ -9,7 +9,7 @@ import hashlib
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'V1.0.2'
+VERSION = 'V1.0.3'
 OUT = ROOT / '_rel'
 
 # Fixed timestamp so the archives are byte-reproducible across runs.
@@ -135,6 +135,12 @@ One sub-zip per game — extract only the one you need:
 
 「适配版本」是补丁实际验证过的游戏版本。补丁按可执行文件名和内存特征码识别，其他版本大概率也能用；换了版本后某个功能失效的话，把 ini 里的 `log` 改成 `1` 跑一次，日志会写明哪一步没匹配上。
 "Tested version" is the build each patch was verified against. Other builds will most likely work; if something stops working after an update, set `log=1` and the log says which step failed to match.
+
+## 相对 V1.0.2 的变化 / Changes since V1.0.2
+
+- **修复无双蛇魔Z 在高分辨率下的整屏图层错乱。** 引擎的精灵坐标是 12.4 定点数，内部渲染高度超过 2048 就会溢出，补丁被迫同时启用「精灵 Y 回绕修补」和「全屏背景四边形深度写入修补」；两者叠加后背景会按 `z=0` 把后面所有 `z>0` 的 UI 和 3D 判死，只能靠关掉深度写入放行，而关掉之后过渡层、压暗层又全部透出来。症状是：选择故事/列传多出一层背景、兵营界面整屏发白、loading 只剩余底色、即时演算字幕消失。**`internal_render_width` / `internal_render_height` 默认改为跟随桌面分辨率**，配置说明里写明 2048 是红线。
+- **修复无双蛇魔Z 的手柄确认键。** 选择故事、列传以及「2P 加入」弹窗只接受键盘确认，手柄原来完全无响应。现在 **B 键和 OPTION 键等同键盘 Enter**。该作既不轮询 DirectInput 键盘设备，也不认外部投递的窗口消息，所以改走 `SendInput`，由系统输入栈生成真实的键消息。新增 `pad_enter_buttons` / `pad_enter_mode` / `pad_enter_pulse_ms` 三个配置项。
+- 新增 `orochi_depth_fix`：背景四边形深度写入的处理方式，仅在内部渲染高度超过 2048 时生效。
 
 ## 相对 V1.0.1 的变化 / Changes since V1.0.1
 
