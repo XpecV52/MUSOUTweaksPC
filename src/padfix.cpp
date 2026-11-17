@@ -17,7 +17,19 @@
 static HMODULE selfModule;
 static char iniPath[MAX_PATH], logPath[MAX_PATH];
 static int enabled=1, foregroundOnly=1, menuNavigation=1, dpadPov=0, slotConfig=-1;
-static int dpadAsLeftStick=0;
+// 0=off, 1=mirror the D-pad onto the left stick continuously, 2=mirror it only
+// for a short pulse on each direction change (menu-friendly, no walking).
+static int dpadAsLeftStick=0, dpadPulseMs=50;
+// 1 = the D-pad also synthesizes the keyboard arrow keys, which is the only
+// menu path some ports accept (SSM6 DX has no patchable menu map).
+static int dpadArrowKeys=0;
+static volatile LONG lastDpadBits=0;
+// Keyboard arrows the adapter is currently reporting as pressed on behalf of the
+// D-pad. The real keyboard device is shared, so only ever OR bits in.
+static WORD arrowSent=0;
+static const BYTE arrowDik[4]={DIK_UP,DIK_DOWN,DIK_LEFT,DIK_RIGHT};
+static WORD dpadBridgeLast=0;
+static ULONGLONG dpadBridgeUntil=0;
 static int leftDeadzone=20, rightThreshold=55, triggerThreshold=40, neutralMs=250;
 static bool logging=false;
 static std::recursive_mutex mutex;
@@ -96,6 +108,54 @@ static void logf(const char* fmt,...) {
  fprintf(f,"[%lu] ",GetTickCount()); va_list a;va_start(a,fmt);vfprintf(f,fmt,a);va_end(a);
  fputc('\n',f);fclose(f);
 }
+// D-pad state translated into the four keyboard arrows. SSM6 DX menus are
+// driven by the keyboard arrows (its gamepad menu path only reads the left
+// stick), so the D-pad is delivered through the game's own keyboard device
+// instead of the stick: the cursor moves, the character stays where it is.
+static WORD arrowDesired() {
+ if(!dpadArrowKeys)return 0;
+ LONG bits=lastDpadBits;WORD out=0;
+ if(bits&XINPUT_GAMEPAD_DPAD_UP)out|=1;
+ if(bits&XINPUT_GAMEPAD_DPAD_DOWN)out|=2;
+ if(bits&XINPUT_GAMEPAD_DPAD_LEFT)out|=4;
+ if(bits&XINPUT_GAMEPAD_DPAD_RIGHT)out|=8;
+ return out;
+}
+// Polled path: the game re-reads the full 256-byte keyboard state every frame,
+// so simply adding the pressed bit is enough and releasing the D-pad releases
+// the key. Bits are never cleared, so a physically held arrow keeps working.
+static void mergeArrowKeys(BYTE* keys) {
+ WORD want=arrowDesired();if(!want)return;
+ static bool logged=false;
+ if(!logged){logged=true;logf("D-pad arrow-key injection active on the shared keyboard");}
+ if(want&1)keys[DIK_UP]|=0x80;
+ if(want&2)keys[DIK_DOWN]|=0x80;
+ if(want&4)keys[DIK_LEFT]|=0x80;
+ if(want&8)keys[DIK_RIGHT]|=0x80;
+}
+// Buffered path: the game only sees transitions, so a key-down/key-up pair has
+// to be appended to whatever the real keyboard already reported.
+static void appendArrowEvents(LPDIDEVICEOBJECTDATA ptr,DWORD* count,DWORD capacity,DWORD flags) {
+ WORD want=arrowDesired();WORD changed=(WORD)(want^arrowSent);
+ if(!changed)return;
+ DWORD have=*count,room=capacity>have?capacity-have:0;
+ if(!room)return;
+ DWORD written=0;WORD applied=0;
+ for(int i=0;i<4&&written<room;i++) {
+  WORD bit=(WORD)(1<<i);
+  if(!(changed&bit))continue;
+  DIDEVICEOBJECTDATA e={};e.dwOfs=arrowDik[i];e.dwData=(want&bit)?0x80:0;
+  e.dwTimeStamp=GetTickCount();
+  if(ptr)ptr[have+written]=e;
+  written++;applied|=bit;
+ }
+ // A peek must not consume the transition, otherwise the following real read
+ // never reports the press the game is waiting for.
+ if(!(flags&DIGDD_PEEK))arrowSent=(WORD)((arrowSent&~applied)|(want&applied));
+ *count=have+written;
+ static bool logged=false;
+ if(!logged){logged=true;logf("D-pad arrow-key events queued on the buffered keyboard: bits=%x",want);}
+}
 static HMODULE systemDll(const char* name) {
  char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH);strcat_s(path,"\\");strcat_s(path,name);
  return LoadLibraryA(path);
@@ -145,7 +205,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.44 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.45 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -156,12 +216,14 @@ static void init() {
  triggerThreshold=std::clamp(opt("trigger_threshold",40),1,254);
  neutralMs=std::clamp(opt("neutral_ms",250),0,5000);
  backend=std::clamp(opt("backend",0),0,2);
- int dpadAsLeftStickSetting=std::clamp(opt("dpad_as_left_stick",0),-1,1);
+ int dpadAsLeftStickSetting=std::clamp(opt("dpad_as_left_stick",0),-1,2);
+ dpadPulseMs=std::clamp(opt("dpad_menu_pulse_ms",50),0,1000);
+ int dpadArrowKeysSetting=std::clamp(opt("dpad_arrow_keys",-1),-1,1);
  ds4RightX=std::clamp(opt("ds4_right_x",2),0,5);ds4RightY=std::clamp(opt("ds4_right_y",5),0,5);
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.44 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.45 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -194,11 +256,16 @@ static void init() {
  }
  if(!nativeMenuMap&&!nativeMenuMapCandidateCount)logf("native menu map unavailable for this EXE; D-pad buttons and POV remain available");
  platformConfigure();
- // Auto mode bridges the D-pad to the left stick for the titles whose native
- // menu map we cannot locate: SSM3 PC and SSM6 DX both read menus from the left
- // stick, so their D-pad buttons alone never move the cursor.
- bool dpadBridgeDefault=!_stricmp(gameExeName,"ShinSangokumusou3.exe")||!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe");
- dpadAsLeftStick=dpadAsLeftStickSetting<0?dpadBridgeDefault:dpadAsLeftStickSetting;
+ // Auto mode: SSM3 PC wants a continuous mirror because its menu table cannot
+ // be reached. SSM6 DX uses dpad_arrow_keys instead, so its D-pad never reaches
+ // the left stick and cannot walk the character.
+ bool dpadBridgeDefault=!_stricmp(gameExeName,"ShinSangokumusou3.exe");
+ dpadAsLeftStick=dpadAsLeftStickSetting<0?(dpadBridgeDefault?1:0):dpadAsLeftStickSetting;
+ // SSM6 DX menus read the keyboard arrows, so the D-pad drives them through the
+ // virtual keyboard instead of the left stick: menus work, the character stays put.
+ bool arrowDefault=!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe");
+ dpadArrowKeys=dpadArrowKeysSetting<0?(arrowDefault?1:0):dpadArrowKeysSetting;
+ logf("D-pad arrow-key synthesis=%d",dpadArrowKeys);
  logf("D-pad to left-stick bridge=%d",dpadAsLeftStick);
 #endif
 }
@@ -236,6 +303,7 @@ static bool foreground() {
 }
 static PadState sample() {
  std::lock_guard<std::recursive_mutex> lock(mutex);
+ lastDpadBits=0;
  PadState out; XINPUT_STATE s={}; bool connected=false;
  if(getXState&&backend!=2&&selectedBackend!=2) {
   if(slotConfig>=0){selectedSlot=slotConfig;connected=getXState(selectedSlot,&s)==ERROR_SUCCESS;}
@@ -282,17 +350,30 @@ static PadState sample() {
  out.buttons[15]=(out.dpad&XINPUT_GAMEPAD_DPAD_RIGHT)?0x80:0;
  out.buttons[16]=g.sThumbRY>rt?0x80:0;out.buttons[17]=g.sThumbRY<-rt?0x80:0;
  out.buttons[18]=g.sThumbRX<-rt?0x80:0;out.buttons[19]=g.sThumbRX>rt?0x80:0;
- // The SM3 PC build does not consume the POV/button D-pad through its
- // default native menu map. Mirror digital directions to the left stick for
- // that profile, while preserving independent physical left-stick input.
+ // The SM3 PC build and SSM6 DX do not consume the POV/button D-pad through
+ // their native menu maps, so the D-pad is mirrored onto the left stick.
+ // Mode 1 mirrors continuously (menus repeat, but the character also walks).
+ // Mode 2 mirrors only for a short pulse per direction change: long enough for
+ // a menu to latch one cursor step, short enough that gameplay barely moves.
  if(dpadAsLeftStick){
-  if(out.dpad&XINPUT_GAMEPAD_DPAD_LEFT)out.x=-255;
-  else if(out.dpad&XINPUT_GAMEPAD_DPAD_RIGHT)out.x=255;
-  // SM3 reads the virtual DirectInput Y axis opposite to this adapter's prior
-  // assumption: positive moves the menu down, so invert the D-pad bridge.
-  if(out.dpad&XINPUT_GAMEPAD_DPAD_UP)out.y=-255;
-  else if(out.dpad&XINPUT_GAMEPAD_DPAD_DOWN)out.y=255;
+  bool apply=dpadAsLeftStick==1;
+  if(!apply){
+   if(out.dpad!=dpadBridgeLast){
+    dpadBridgeLast=out.dpad;
+    dpadBridgeUntil=out.dpad?GetTickCount64()+(ULONGLONG)dpadPulseMs:0;
+   }
+   apply=out.dpad&&GetTickCount64()<dpadBridgeUntil;
+  }
+  if(apply){
+   if(out.dpad&XINPUT_GAMEPAD_DPAD_LEFT)out.x=-255;
+   else if(out.dpad&XINPUT_GAMEPAD_DPAD_RIGHT)out.x=255;
+   // SM3 reads the virtual DirectInput Y axis opposite to this adapter's prior
+   // assumption: positive moves the menu down, so invert the D-pad bridge.
+   if(out.dpad&XINPUT_GAMEPAD_DPAD_UP)out.y=-255;
+   else if(out.dpad&XINPUT_GAMEPAD_DPAD_DOWN)out.y=255;
+  }
  }
+ lastDpadBits=out.dpad;
  return out;
 }
 static DIDEVICEINSTANCEA instance() {
@@ -303,6 +384,7 @@ static DIDEVICEINSTANCEA instance() {
 struct Field { DWORD offset,type;int index; };
 class Device final:public IDirectInputDevice8A {
  LONG refs=1; IDirectInputDevice8A* real=nullptr; bool keyboard=false,acquired=false;
+ bool keyboardPollLogged=false,keyboardBufferedLogged=false,keyboardAcquireLogged=false;
  std::vector<Field> fields; DWORD dataSize=0,bufferSize=0,sequence=0;
  LONG minimum[2]={0,0},maximum[2]={65535,65535};
  std::vector<BYTE> previous; std::deque<DIDEVICEOBJECTDATA> events;
@@ -376,16 +458,29 @@ public:
   if(&prop==&DIPROP_DEADZONE||&prop==&DIPROP_SATURATION)return DI_OK;
   return DIERR_UNSUPPORTED;
  }
- HRESULT STDMETHODCALLTYPE Acquire() override {if(real)return real->Acquire();acquired=true;return DI_OK;}
+ HRESULT STDMETHODCALLTYPE Acquire() override {
+  if(!real){acquired=true;return DI_OK;}
+  HRESULT hr=real->Acquire();
+  if(keyboard&&!keyboardAcquireLogged){keyboardAcquireLogged=true;logf("keyboard Acquire hr=%08lx",hr);}
+  return hr;
+ }
  HRESULT STDMETHODCALLTYPE Unacquire() override {if(real)return real->Unacquire();acquired=false;events.clear();previous.clear();return DI_OK;}
  HRESULT STDMETHODCALLTYPE GetDeviceState(DWORD n,LPVOID p) override {
   if(!real)return render(n,p);
-  return real->GetDeviceState(n,p);
+  HRESULT hr=real->GetDeviceState(n,p);
+  if(keyboard&&!keyboardPollLogged){keyboardPollLogged=true;logf("keyboard GetDeviceState size=%lu hr=%08lx",n,hr);}
+  if(SUCCEEDED(hr)&&keyboard&&p&&n==256)mergeArrowKeys((BYTE*)p);
+  return hr;
  }
  HRESULT STDMETHODCALLTYPE GetDeviceData(DWORD stride,LPDIDEVICEOBJECTDATA ptr,LPDWORD count,DWORD flags) override {
   if(!count||stride!=sizeof(DIDEVICEOBJECTDATA)||flags&~DIGDD_PEEK)return DIERR_INVALIDPARAM;
   DWORD capacity=*count;*count=0;
-  if(real){*count=capacity;return real->GetDeviceData(stride,ptr,count,flags);}
+  if(real){
+   *count=capacity;HRESULT hr=real->GetDeviceData(stride,ptr,count,flags);
+   if(keyboard&&!keyboardBufferedLogged){keyboardBufferedLogged=true;logf("keyboard GetDeviceData capacity=%lu hr=%08lx",capacity,hr);}
+   if(SUCCEEDED(hr)&&keyboard)appendArrowEvents(ptr,count,capacity,flags);
+   return hr;
+  }
   if(!acquired)return DIERR_NOTACQUIRED;if(!bufferSize)return DIERR_NOTBUFFERED;
   std::vector<BYTE> current(dataSize);HRESULT hr=render(dataSize,current.data());if(FAILED(hr))return hr;
   if(previous.empty())previous.assign(dataSize,0);

@@ -46,6 +46,8 @@ static void reportReentry(const char* name) {
 }
 // 0=stretch the complete logical frame; 1=preserve it centered over a stretched full-screen backdrop.
 static int scaleAspectMode=0;
+// Diagnostic only: installs the Present hook so a flag file can grab one frame.
+static bool frameCapture=false;
 // 0=point, 1=linear, 2=Catmull-Rom cubic reconstruction.
 static int scaleFilter=2;
 static char gameExeName[MAX_PATH];
@@ -554,6 +556,49 @@ static HRESULT WINAPI platformSetScissorRect(IDirect3DDevice9* d,const RECT* req
  return fn(d,requested);
 }
 static std::unordered_set<void*> loggedDepthResizes;
+// Frame grab for field diagnostics: create MUSOUTweaksPC_capture.flag next to the
+// game executable and the next presented backbuffer is written to
+// MUSOUTweaksPC_frame.bmp. Reads the real game image even when another window
+// covers it, which a desktop BitBlt cannot do.
+static void captureFrameIfRequested(IDirect3DDevice9* d) {
+ static ULONGLONG nextCheck=0;
+ ULONGLONG now=GetTickCount64();
+ if(now<nextCheck)return;
+ nextCheck=now+300;
+ char dir[MAX_PATH]={};GetModuleFileNameA(nullptr,dir,MAX_PATH);
+ char* slash=strrchr(dir,'\\');if(!slash)return;slash[1]=0;
+ char flag[MAX_PATH]={},out[MAX_PATH]={};
+ strcpy_s(flag,dir);strcat_s(flag,"MUSOUTweaksPC_capture.flag");
+ if(GetFileAttributesA(flag)==INVALID_FILE_ATTRIBUTES)return;
+ DeleteFileA(flag);
+ strcpy_s(out,dir);strcat_s(out,"MUSOUTweaksPC_frame.bmp");
+ IDirect3DSurface9* back=nullptr;
+ if(FAILED(d->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back))||!back){logf("capture: no backbuffer");return;}
+ D3DSURFACE_DESC desc={};back->GetDesc(&desc);
+ // A swap-chain back buffer is normally created without D3DPRESENTFLAG_LOCKABLE_BACKBUFFER,
+ // so it cannot be locked directly: copy it into a system-memory surface first.
+ IDirect3DSurface9* copy=nullptr;
+ HRESULT hr=d->CreateOffscreenPlainSurface(desc.Width,desc.Height,desc.Format,D3DPOOL_SYSTEMMEM,&copy,nullptr);
+ if(SUCCEEDED(hr))hr=d->GetRenderTargetData(back,copy);
+ D3DLOCKED_RECT locked={};
+ if(SUCCEEDED(hr))hr=copy->LockRect(&locked,nullptr,D3DLOCK_READONLY);
+ if(FAILED(hr)){logf("capture: copy/lock failed hr=%08lx format=%d",hr,(int)desc.Format);if(copy)copy->Release();back->Release();return;}
+ DWORD width=desc.Width,height=desc.Height,rowBytes=(width*3+3)&~3U,imageBytes=rowBytes*height;
+ BITMAPFILEHEADER fh={};fh.bfType=0x4D42;fh.bfOffBits=sizeof(fh)+sizeof(BITMAPINFOHEADER);fh.bfSize=fh.bfOffBits+imageBytes;
+ BITMAPINFOHEADER ih={};ih.biSize=sizeof(ih);ih.biWidth=(LONG)width;ih.biHeight=(LONG)height;ih.biPlanes=1;ih.biBitCount=24;ih.biSizeImage=imageBytes;
+ FILE* f=nullptr;fopen_s(&f,out,"wb");
+ if(f){
+  fwrite(&fh,sizeof(fh),1,f);fwrite(&ih,sizeof(ih),1,f);
+  std::vector<BYTE> row(rowBytes,0);
+  for(LONG y=(LONG)height-1;y>=0;y--) {
+   const BYTE* src=(const BYTE*)locked.pBits+(size_t)y*locked.Pitch;
+   for(DWORD x=0;x<width;x++){row[x*3]=src[x*4];row[x*3+1]=src[x*4+1];row[x*3+2]=src[x*4+2];}
+   fwrite(row.data(),rowBytes,1,f);
+  }
+  fclose(f);logf("capture: wrote %s %ux%u",out,width,height);
+ }
+ copy->UnlockRect();copy->Release();back->Release();
+}
 static HRESULT WINAPI platformCreateDepthStencilSurface(IDirect3DDevice9* d,UINT width,UINT height,D3DFORMAT format,D3DMULTISAMPLE_TYPE multiSample,DWORD quality,BOOL discard,IDirect3DSurface9** surface,HANDLE* sharedHandle) {
  using Fn=HRESULT(WINAPI*)(IDirect3DDevice9*,UINT,UINT,D3DFORMAT,D3DMULTISAMPLE_TYPE,DWORD,BOOL,IDirect3DSurface9**,HANDLE*);
  auto fn=(Fn)originalMethod(d,29);if(!fn)return D3DERR_INVALIDCALL;
@@ -596,6 +641,7 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
   if(from)from->Release();if(to)to->Release();
   }
  bool scaled=!chain&&scaleBackbufferToNative(d,source,destination);
+ {bool ours=false;{std::lock_guard<std::mutex> lock(tableMutex);ours=renderDevices.count(d)!=0;}if(ours)captureFrameIfRequested(d);}
  HRESULT hr=fn?fn(d,scaled?nullptr:source,scaled?nullptr:destination,overrideWindow,scaled?nullptr:dirty):D3DERR_INVALIDCALL;
  // Pace after displaying this frame so the next game-loop iteration can
  // sample input and render before its next Present deadline.
@@ -667,7 +713,7 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  if(ours)forcePresentation(*p);HRESULT hr=fn?fn(d,adapter,type,focus,flags,p,out):D3DERR_INVALIDCALL;
  logf("D3D CreateDevice device=%p focus=%p present_hwnd=%p game_hwnd=%p ours=%d flags=%08lx request=%ux%u/%d actual=%ux%u/%d hr=%08lx",SUCCEEDED(hr)&&out?*out:nullptr,focus,p->hDeviceWindow,gameWindow,ours,flags,requestedW,requestedH,requestedWindowed,p->BackBufferWidth,p->BackBufferHeight,p->Windowed,hr);
  if(SUCCEEDED(hr)&&*out){
-  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d",fpsLimit,singlePresentMode,nativeOutput);}
+  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture);}
   if(ours){
    UINT logicalW=requestedW,logicalH=requestedH;
    if(((legacyInternalResolutionEnabled()&&nativeOutput)||nativeResolution)&&(!logicalW||!logicalH))getNativeDisplaySize(logicalW,logicalH);
@@ -1111,6 +1157,7 @@ static void platformConfigure() {
  scaleAspectMode=std::clamp(opt("scale_aspect_mode",0),0,1);
  scaleFilter=std::clamp(opt("scale_filter",2),0,2);
  singlePresentMode=std::clamp(opt("single_present",1),0,1)!=0;
+ frameCapture=opt("frame_capture",0)!=0;
  internalRenderWidth=std::clamp(opt("internal_render_width",0),0,8192);
  internalRenderHeight=std::clamp(opt("internal_render_height",0),0,8192);
  forceNativeBuffer=(renderWidth!=0||renderHeight!=0);

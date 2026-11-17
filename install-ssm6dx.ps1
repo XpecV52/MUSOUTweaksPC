@@ -19,11 +19,7 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 $supplementalFiles = @(
     [pscustomobject]@{ source='supplemental\ssm6tc\d3dx9_43.dll'; name='d3dx9_43.dll' },
     [pscustomobject]@{ source='supplemental\ssm6tc\mods\Fix_for_SM6.dll'; name='mods\Fix_for_SM6.dll' },
-    [pscustomobject]@{ source='supplemental\ssm6tc\mods\Fix_for_SM6\enable.txt'; name='mods\Fix_for_SM6\enable.txt' },
-    [pscustomobject]@{ source='supplemental\ssm6tc\mods\resolution_for_SM6TC.dll'; name='mods\resolution_for_SM6TC.dll' },
-    [pscustomobject]@{ source='supplemental\ssm6tc\mods\resolution_for_SM6TC\config.ini'; name='mods\resolution_for_SM6TC\config.ini' },
-    [pscustomobject]@{ source='supplemental\ssm6tc\mods\resolution_for_SM6TC\enable.txt'; name='mods\resolution_for_SM6TC\enable.txt' },
-    [pscustomobject]@{ source='supplemental\ssm6tc\mods\resolution_for_SM6TC\load.txt'; name='mods\resolution_for_SM6TC\load.txt' }
+    [pscustomobject]@{ source='supplemental\ssm6tc\mods\Fix_for_SM6\enable.txt'; name='mods\Fix_for_SM6\enable.txt' }
 )
 if ($hasTraditionalChinese) { $installFiles += $supplementalFiles }
 foreach ($item in $installFiles) {
@@ -71,5 +67,5 @@ try {
 Write-Output "Installed in: $target"
 Write-Output "Backup: $backup"
 Write-Output 'Launch the game normally. The patch supports XInput, native DS4, D-pad mapping, hot-plug, and borderless desktop-resolution rendering.'
-if ($hasTraditionalChinese) { Write-Output 'Installed the supplied SM6TC resolution/fix mods through the D3DX9 mod loader.' }
+if ($hasTraditionalChinese) { Write-Output 'Installed the supplied SM6TC facial-expression fix through the D3DX9 mod loader. The bundled resolution mod is intentionally not installed: it forces the engine render size to the desktop while the game keeps its own logical resolution, which shows up as a wrong field of view until the resolution is applied again in game.' }
 else { Write-Output 'SM6TC supplemental mods were skipped because SM6TC.exe is not present.' }

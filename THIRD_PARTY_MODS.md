@@ -3,10 +3,10 @@
 For the Traditional Chinese `SM6TC.exe` build, the combined package installs three supplied binaries:
 
 - `d3dx9_43.dll` — the D3DX9 proxy mod loader. It loads DLL mods from the game’s `mods` directory; the loader documents per-mod `load.txt` ordering. [Loader project](https://github.com/techiew/EldenRingModLoader)
-- `mods/Fix_for_SM6.dll` — retained unmodified. Its supplied log records two AOB-based code patches, but does not document their exact gameplay effects.
-- `mods/resolution_for_SM6TC.dll` — retained unmodified. Its config sets the game’s internal render size to 2560×1440. MUSOUTweaksPC continues to scale the output to the current desktop size.
+- `mods/Fix_for_SM6.dll` — retained unmodified. Its supplied log records two AOB-based code patches, but does not document their exact gameplay effects. **Installed and supported.**
+- `mods/resolution_for_SM6TC.dll` — retained unmodified, shipped for reference only and **no longer installed by `install-ssm6dx.ps1`**. Its config forces the engine render size to 2560×1440 while the game keeps its own logical resolution (1920×1080), so the 3D scene and the 2D layer disagree: the field of view looks wrong and only re-syncs after the resolution is applied again inside the game. It also conflicts with the borderless path, which expects the game to render at the resolution it selected.
 
-The supplied `enable.txt` files keep both mods enabled. Set a mod’s file to `0` to disable it. The resolution mod’s `load.txt` keeps its supplied order; `Fix_for_SM6.dll` uses the loader’s automatic order after explicitly ordered mods.
+The supplied `enable.txt` files keep the mods enabled; note that the loader recreates a missing `enable.txt`, so renaming it does not disable a mod. To disable one, move its `.dll` and its folder out of the `mods` directory. `Fix_for_SM6.dll` uses the loader’s automatic order.
 
 MUSOUTweaksPC remains the only DirectInput/XInput adapter. The supplied XInputPlus `Dinput8.dll`, `Dinput.dll`, `XInput1_3.dll`, and `XInputPlus.ini` are not installed because they provide a second controller proxy and overlap the existing adapter.
 

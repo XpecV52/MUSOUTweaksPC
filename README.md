@@ -100,6 +100,12 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.45
+- **真三国无双6 with 猛将传 DX**：十字键改用「游戏自己的键盘设备」导航菜单，`dpad_as_left_stick` 恢复默认 0。诊断确认该作是以**缓冲模式**读 DirectInput 键盘（`GetDeviceData`，容量 64）而不是轮询 `GetDeviceState`，所以新配置项 `dpad_arrow_keys` 在游戏的键盘设备上成对追加 `DIK_UP/DOWN/LEFT/RIGHT` 的按下与松开事件。菜单光标可以移动，左摇杆完全不动，**角色不会再跟着走**。
+- **真三国无双6 with 猛将传 DX**：`native_resolution` / `scale_to_fill` 改为默认 0。原生渲染下游戏只往 2560×1440 后备缓冲的左上角 1920×1080 区域绘制，右边和下边是黑的；开启 `scale_to_fill` 又会让 3D 视口与按 1920×1080 排版的 2D 层错位，表现为「视野异常」。现在保留游戏自己的渲染分辨率，由无边框窗口把它拉伸铺满桌面，视野与 2D 排版和原始设计完全一致。
+- **真三国无双6 with 猛将传 DX**：第三方 `resolution_for_SM6TC` 与本补丁冲突 —— 它把引擎内部渲染分辨率改成 2560×1440，但游戏的逻辑分辨率仍是 1920×1080，两者错位就是「视野异常」，只有在游戏内重新应用一次分辨率才会重新同步。`Fix_for_SM6`（修复面部表情）不受影响，保持可用。
+- 新增 `[platform] frame_capture` 诊断开关：置 1 后在游戏目录创建 `MUSOUTweaksPC_capture.flag`，下一帧会从后备缓冲直接写出 `MUSOUTweaksPC_frame.bmp`。可绕开桌面截屏拿不到游戏画面的问题。
+
 ### 2.44
 - **真三国无双6 with 猛将传 DX**：修复开启 `native_resolution` 后画面卡死（按键有声音、画面不刷新）。根因是引擎按自己请求的分辨率创建深度模板缓冲；后备缓冲区放大后视口超出该表面，D3D9 会拒绝所有 `Clear` 和带深度测试的绘制，画面停在旧帧。现在深度模板缓冲会同步放大到后备缓冲区尺寸，**无边框缩放与高分辨率 MOD 可同时使用**。
 - **真三国无双6 with 猛将传 DX**：`dpad_as_left_stick` 改为默认开启。该作找不到游戏原生菜单映射表，菜单只认左摇杆，十字键必须桥接到左摇杆才能移动菜单光标。
@@ -110,7 +116,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前版本 **2.44**。历史发布包的名称、大小与 SHA-256 见 `RELEASES.md`。
+当前版本 **2.45**。历史发布包的名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -216,6 +222,12 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Changelog
 
+### 2.45
+- **SSM6DX**: the D-pad now navigates menus through the game's own keyboard device, and `dpad_as_left_stick` is back to 0. Diagnostics showed this build reads DirectInput keyboards in **buffered** mode (`GetDeviceData`, capacity 64) rather than polling `GetDeviceState`, so the new `dpad_arrow_keys` option appends paired `DIK_UP/DOWN/LEFT/RIGHT` key-down and key-up events to that device. The menu cursor moves, the left stick stays untouched, and **the character no longer walks**.
+- **SSM6DX**: `native_resolution` / `scale_to_fill` now default to 0. With native rendering the game only draws into the top-left 1920x1080 area of a 2560x1440 backbuffer, leaving black bars on the right and bottom; enabling `scale_to_fill` instead mismatches the 3D viewport against a 2D layer laid out for 1920x1080, which shows up as the wrong field of view. The game now keeps its own render resolution and the borderless window stretches that image to the desktop, so the view and the 2D layout match the original design.
+- **SSM6DX**: the third-party `resolution_for_SM6TC` mod conflicts with this patch. It forces the engine's internal render size to 2560x1440 while the game's logical resolution stays 1920x1080; that mismatch is the wrong field of view, and it only re-syncs when the resolution is applied again in game. `Fix_for_SM6` (facial expression fix) is unaffected and stays supported.
+- New `[platform] frame_capture` diagnostic: set it to 1, then create `MUSOUTweaksPC_capture.flag` in the game folder and the next frame is written straight from the backbuffer to `MUSOUTweaksPC_frame.bmp`. Useful when a desktop capture cannot see the game window.
+
 ### 2.44
 - **SSM6DX (Dynasty Warriors 7 DX)**: fixed the frozen picture with `native_resolution` enabled (input and audio kept working while the screen stopped updating). The engine creates its depth-stencil surface at the resolution it requested; once the backbuffer is enlarged the viewport no longer fits that surface, so D3D9 rejects every `Clear` and every depth-tested draw and the frame stays stale. The depth-stencil surface is now grown to the backbuffer size, so **borderless scaling and external high-resolution mods can be used together**.
 - **SSM6DX**: `dpad_as_left_stick` now defaults to on. No native menu map can be located for this title and its menus only read the left stick, so the D-pad has to be bridged to move the menu cursor.
@@ -226,4 +238,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current release: **2.44**. Names, sizes and SHA-256 of past packages are listed in `RELEASES.md`.
+Current release: **2.45**. Names, sizes and SHA-256 of past packages are listed in `RELEASES.md`.
