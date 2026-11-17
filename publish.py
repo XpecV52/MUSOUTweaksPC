@@ -36,7 +36,9 @@ def call(method, url, tok, body=None, raw=None, content_type='application/json',
     })
     try:
         with urllib.request.urlopen(req) as response:
-            return json.load(response)
+            # DELETE returns 204 with an empty body.
+            payload = response.read()
+            return json.loads(payload) if payload else {}
     except urllib.error.HTTPError as error:
         if missing_ok and error.code == 404:
             return None
@@ -63,6 +65,10 @@ def main():
     release = call('GET', f'{API}/repos/{REPO}/releases/tags/{tag}', tok, missing_ok=True)
     if release:
         print(f'reusing release {tag} ({release["html_url"]})')
+        if body and body != release.get('body'):
+            release = call('PATCH', f'{API}/repos/{REPO}/releases/{release["id"]}', tok,
+                           {'body': body})
+            print('updated release notes')
     else:
         release = call('POST', f'{API}/repos/{REPO}/releases', tok, {
             'tag_name': tag,
