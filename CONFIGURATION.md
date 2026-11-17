@@ -86,7 +86,9 @@ render_height=1080
 
 ## 真三6 DX 额外补丁
 
-仅 `SM6TC.exe` 会由 `install-ssm6dx.ps1` 安装 `Fix_for_SM6.dll` 与 `resolution_for_SM6TC.dll`。它们由 `d3dx9_43.dll` Mod Loader 从 `mods` 子目录加载；各自的 `enable.txt` 设为 `1` 启用、`0` 禁用。分辨率扩展当前把游戏内部渲染尺寸设为 `2560×1440`；主补丁仍会把输出缩放到当前桌面尺寸。扩展 DLL 为随项目提供的二进制，未提供源码。
+仅 `SM6TC.exe` 会由 `install-ssm6dx.ps1` 安装 `Fix_for_SM6.dll`（修复面部表情）。它由 `d3dx9_43.dll` Mod Loader 从 `mods` 子目录加载，`enable.txt` 设为 `1` 启用、`0` 禁用（注意加载器会自己重建缺失的 `enable.txt`，要彻底禁用得把 `.dll` 和目录一起移出 `mods`）。扩展 DLL 为随项目提供的二进制，未提供源码。
+
+随包提供的 `resolution_for_SM6TC.dll` **已不再安装**：它把引擎内部渲染分辨率改成桌面尺寸而游戏的逻辑分辨率不变，会造成 3D 与 2D 层错位（视野异常），详见 `THIRD_PARTY_MODS.md`。
 
 ## 常用配置组合
 

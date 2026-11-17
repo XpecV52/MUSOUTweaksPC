@@ -13,5 +13,6 @@ analysis/
 *.bmp
 *.png
 
-# 发布包不进版本库，历史清单见 RELEASES.md
+# 发布包不进版本库：对外发布物只放 GitHub Releases，本地自测包也不入库
 *.zip
+_rel/

@@ -12,9 +12,7 @@ $allowedFiles = @(
     'dinput8.dll','d3dx9_43.dll','OrochiZPadX.ini','SM2_Tweaks.ini','SSM2_Tweaks.ini',
     'SSM3_Tweaks.ini','SSM4_Tweaks.ini','SSM6_Tweaks.ini','SSM7_Tweaks.ini',
     'OrochiZPadX.log','MUSOUTweaksPC.log','OrochiZPadX-diagnose.exe',
-    'mods\Fix_for_SM6.dll','mods\Fix_for_SM6\enable.txt',
-    'mods\resolution_for_SM6TC.dll','mods\resolution_for_SM6TC\config.ini',
-    'mods\resolution_for_SM6TC\enable.txt','mods\resolution_for_SM6TC\load.txt'
+    'mods\Fix_for_SM6.dll','mods\Fix_for_SM6\enable.txt'
 )
 foreach ($entry in $entries) {
     if ($entry.name -notin $allowedFiles) { throw 'Unrecognized manifest file.' }

@@ -30,7 +30,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 ### 真三国无双6with猛将传DX(SSM6DX_Shin Sangokumusou6 with Moushouden DX)
 
-手柄适配 + 十字键菜单导航 + 无边框全屏 + 单次主交换链呈现（让 Steam/RTSS 按一帧统计，覆盖层不掉帧计数），并按桌面尺寸做缩放。修复了本作后台扫描线程在特定时序下的崩溃。繁体中文版（`SM6TC.exe`）可额外安装附带的第三方 MOD：`d3dx9_43.dll` 加载器 + `Fix_for_SM6.dll` + `resolution_for_SM6TC.dll`，由 `install-ssm6dx.ps1` 自动备份后安装，细节见 `THIRD_PARTY_MODS.md`。
+手柄适配 + 十字键菜单导航 + 无边框全屏 + 单次主交换链呈现（让 Steam/RTSS 按一帧统计，覆盖层不掉帧计数），画面由无边框窗口拉伸铺满桌面。修复了本作后台扫描线程在特定时序下的崩溃。繁体中文版（`SM6TC.exe`）可额外安装附带的第三方 MOD：`d3dx9_43.dll` 加载器 + `Fix_for_SM6.dll`（修复面部表情），由 `install-ssm6dx.ps1` 自动备份后安装，细节见 `THIRD_PARTY_MODS.md`。
 
 ### 真三国无双7with猛将传(SSM7DX_Shin Sangokumusou7 with Moushouden)
 
@@ -58,7 +58,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 ## 安装
 
-1. 从 [Releases](../../releases) 或仓库根目录取 `MUSOUTweaksPC-<版本>-x86.zip`，解压。
+1. 从 [Releases](../../releases) 取 `MUSOUTweaksPC_V<版本>.zip`，解压后里面按游戏分好了子包，只解自己那一个（子包内就是 `dinput8.dll` + 对应 INI）。
 2. 把对应游戏的 `dinput8.dll` 与 `*.ini` 放进该游戏可执行文件所在目录：
 
 | 游戏 | 目标目录 | DLL |
@@ -116,7 +116,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前版本 **2.45**。历史发布包的名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.45**，对外发布版本 **V1.0.1**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -152,7 +152,7 @@ Same gamepad and window handling as SSM3, plus a signature-verified native menu 
 
 ### Dynasty Warriors 6 with Xtreme Legends DX (SSM6DX)
 
-Gamepad adapter, D-pad menu navigation, borderless fullscreen, single primary-chain Present (so Steam/RTSS counts one frame and overlays stay attached) with desktop-sized scaling. Also fixes a crash in the game's background scanner thread. The Traditional Chinese build (`SM6TC.exe`) can additionally load the bundled third-party mods: a `d3dx9_43.dll` loader, `Fix_for_SM6.dll` and `resolution_for_SM6TC.dll`, installed with a timestamped backup by `install-ssm6dx.ps1`; see `THIRD_PARTY_MODS.md`.
+Gamepad adapter, D-pad menu navigation, borderless fullscreen, single primary-chain Present (so Steam/RTSS counts one frame and overlays stay attached); the borderless window stretches the game's own frame to the desktop. Also fixes a crash in the game's background scanner thread. The Traditional Chinese build (`SM6TC.exe`) can additionally load the bundled third-party mod: a `d3dx9_43.dll` loader plus `Fix_for_SM6.dll` (facial expression fix), installed with a timestamped backup by `install-ssm6dx.ps1`; see `THIRD_PARTY_MODS.md`.
 
 ### Dynasty Warriors 8 with Xtreme Legends (SSM7DX)
 
@@ -180,7 +180,7 @@ Only the viewpoint moves: FOV, character proportions and HUD scale are preserved
 
 ## Installation
 
-1. Grab `MUSOUTweaksPC-<version>-x86.zip` from [Releases](../../releases) or the repository root and extract it.
+1. Grab `MUSOUTweaksPC_V<version>.zip` from [Releases](../../releases) and extract it. The bundle is split per game — unpack only the sub-zip you need (each holds `dinput8.dll` plus its INI).
 2. Copy the right DLL and its INI into the folder that holds the game executable:
 
 | Game | Target folder | DLL |
@@ -238,4 +238,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current release: **2.45**. Names, sizes and SHA-256 of past packages are listed in `RELEASES.md`.
+Current build: **2.45**; public release: **V1.0.1**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
