@@ -10,7 +10,7 @@
 | Tag | 资产 | 大小 (B) | SHA-256 |
 | --- | --- | ---: | --- |
 | `v1.0.0` | `MUSOUTweaksPC_V1.0.0.zip` | 432822 | 见发布页 |
-| `v1.0.1` | `MUSOUTweaksPC_V1.0.1.zip` | 1090964 | `06d7e5e9ad530cd2b64c8a38d29be549a0e469f348dacbca40308e6bb65d26f5` |
+| `v1.0.1` | `MUSOUTweaksPC_V1.0.1.zip` | 1091191 | `a03d7b92ecd4d5292b52c93d3ec03ae3b627f83caf22b6b8b15a0b882f078648` |
 
 `v1.0.1` 对应内部构建 **2.45**（dll 日志横幅里仍打印 `MUSOUTweaksPC 2.45`，那是构建号，不是发布号）。
 
@@ -32,7 +32,7 @@ python publish.py V1.0.1 --notes _rel\NOTES_V1.0.1.md
 | `MOZTweaks_V1.0.1.zip` | 137917 | 无双蛇魔Z / Musou Orochi Z | `dinput8.dll` + `OrochiZPadX.ini` |
 | `SSM3Tweaks_V1.0.1.zip` | 136819 | 真三国无双3 / Dynasty Warriors 4: Hyper | `dinput8.dll` + `SSM3_Tweaks.ini` |
 | `SSM4SPTweaks_V1.0.1.zip` | 136819 | 真三国无双4 Special / Dynasty Warriors 5 Special | `dinput8.dll` + `SSM4_Tweaks.ini` |
-| `SSM6DXTweaks_V1.0.1.zip` | 426260 | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | `dinput8.dll` + `SSM6_Tweaks.ini`（另附 `d3dx9_43.dll` + `mods/Fix_for_SM6*`） |
+| `SSM6DXTweaks_V1.0.1.zip` | 426486 | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | `dinput8.dll` + `SSM6_Tweaks.ini`（另附 `d3dx9_43.dll` + `mods/Fix_for_SM6*`） |
 | `SSM7wMTweaks_V1.0.1.zip` | 114524 | 真三国无双7 with 猛将传 / Dynasty Warriors 8 | `dinput8.dll`（platform-only 版）+ `SSM7_Tweaks.ini` |
 | `SM2Tweaks_V1.0.1.zip` | 136480 | 战国无双2 / Sengoku Musou 2 | `dinput8.dll` + `SM2_Tweaks.ini` |
 
