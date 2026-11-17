@@ -1,6 +1,6 @@
 # 发布包存档清单
 
-工程根目录的历史发布包在 2026-11-17 清理中间产物时只保留了 `MUSOUTweaksPC-2.42-x86.zip`（当前版本）。
+工程根目录只保留当前版本的发布包（`MUSOUTweaksPC-2.43-x86.zip`，已随源码一起入库），其余历史包在清理时删除。
 其余包的名称、大小与 SHA-256 记录在此，源码均在 git 历史里，需要时按 `package.py` 重新打包即可。
 
 | 文件 | 大小 (B) | SHA-256 | 状态 |
@@ -29,7 +29,8 @@
 | `MUSOUTweaksPC-2.36-x86.zip` | 772133 | `6d276ba6f50ba5eb5f5476ac266612910bb1ede1f6614bdb1aae2a5d62ad2067` | 已删除 |
 | `MUSOUTweaksPC-2.37-x86.zip` | 772904 | `9e80b8f7ac7dbeb91f0a16e59c2817f3d351c74cbd2693d611ad542d0ffd0813` | 已删除 |
 | `MUSOUTweaksPC-2.41-x86.zip` | 763094 | `306531dc2652a9591afd42d59327dd20996866acd0b485865b98fb7446f55cc2` | 已删除 |
-| `MUSOUTweaksPC-2.42-x86.zip` | 765048 | `eea578ee734c180c026811d7111f4c91a640cd97feffc29a9b53a7d0ef84f7a7` | 保留 |
+| `MUSOUTweaksPC-2.42-x86.zip` | 765048 | `eea578ee734c180c026811d7111f4c91a640cd97feffc29a9b53a7d0ef84f7a7` | 已删除 |
+| `MUSOUTweaksPC-2.43-x86.zip` | 771297 | `76cafdcac5cba4015981bab0ff430f28f895a0924ee45c0818778f903767c2ec` | 保留（已入库） |
 | `OrochiZPadX-1.1-x86.zip` | 181443 | `6a511e00bb1a5c6082a59abd3368f78788f6b51d5e666b95bf02de8fec9a9e14` | 已删除 |
 | `OrochiZPadX-1.2-x86.zip` | 188164 | `2356947a1c7c9878c3a6a62d27d6f505c5684e0fb96ee2118dadaeaa26bfb7cb` | 已删除 |
 | `OrochiZPadX-1.3-x86.zip` | 310717 | `3a0c859326397e2c39169c19eab6b0be78e8a6c37cac6bdf18b60f654d86ccf3` | 已删除 |
@@ -44,4 +45,4 @@
 - `build/`：截图 PNG、`.obj`、`.map`、`diagnose.exe`、运行日志。保留 `dinput8.dll` / `dinput8-platform.dll`（`package.py` 直接打包这两个文件）。
 - 根目录：`*.obj` / `*.exp` / `*.lib` 等链接中间件。
 
-`package.py` 输出的 zip 不再进版本库，`RELEASES.md` 就是它们的索引。
+`package.py` 输出的 zip 默认被 `.gitignore` 忽略，只有当前版本用 `git add -f` 显式入库；`RELEASES.md` 是历史包的索引。

@@ -1,4 +1,4 @@
-# Multi-game build
+﻿# Multi-game build
 
 `build/dinput8.dll` contains the XInput/native-DS4 DirectInput adapter and platform hooks. The DLL selects the config filename from the game executable. It is installed for:
 
@@ -11,7 +11,7 @@
 
 `OROCHI_Z_TC.exe` (无双蛇魔Z) uses `OrochiZPadX.ini`. Its verified engine size getters and runtime dimensions port the configurable resolution behavior independently of desktop output; the SM6TC offset list is not applied to this different executable. 3840x2160 rendering uses the game primary swapchain for desktop presentation, with a correction for GS sprite Y coordinate overflow above 2048 pixels. Full-screen background depth writes are isolated so preparation maps and result UI retain depth testing. Player battle cameras support the same distance percentage and foreground shortcuts as SSM7; CPU and renderer projections stay synchronized, and preparation maps are excluded. Set both resolution values to 0 for the previous render sizing behavior.
 
-`Sengoku Musou 2` uses `build/dinput8.dll` and `SM2_Tweaks.ini`. It has XInput/native-DS4 adaptation, four independent D-pad buttons and POV (no left-stick movement bridge), close-confirmation removal, and 75 FPS pacing. The available log confirms D-pad states are sent while left-stick axes remain centered; no native menu-map patch is available yet, so menu cursor navigation is not claimed. Its resolution port uses a game-specific in-memory patch that waits for the protected executable to decrypt, replaces its width/height getters, and adjusts HUD/menu geometry; `0/0` follows the active display's physical resolution. The 2.28 DLL and config are installed, but this new resolution path has not yet been confirmed in a live SW2 session; `SM2Resolution.log` will report whether each signature was found.
+`Sengoku Musou 2` uses `build/dinput8.dll` and `SM2_Tweaks.ini`. It has XInput/native-DS4 adaptation, four independent D-pad buttons and POV (no left-stick movement bridge), close-confirmation removal, and 65 FPS pacing. The available log confirms D-pad states are sent while left-stick axes remain centered; no native menu-map patch is available yet, so menu cursor navigation is not claimed. Its resolution port uses a game-specific in-memory patch that waits for the protected executable to decrypt, replaces its width/height getters, and adjusts HUD/menu geometry; `0/0` follows the active display's physical resolution. The 2.28 DLL and config are installed, but this new resolution path has not yet been confirmed in a live SW2 session; `SM2Resolution.log` will report whether each signature was found.
 
 ## D-pad support status
 

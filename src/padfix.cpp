@@ -19,7 +19,7 @@ static char iniPath[MAX_PATH], logPath[MAX_PATH];
 static int enabled=1, foregroundOnly=1, menuNavigation=1, dpadPov=0, slotConfig=-1;
 static int dpadAsLeftStick=0;
 static int leftDeadzone=20, rightThreshold=55, triggerThreshold=40, neutralMs=250;
-static bool logging=true;
+static bool logging=false;
 static std::recursive_mutex mutex;
 static DWORD (WINAPI *getXState)(DWORD,XINPUT_STATE*);
 static int backend=0,selectedBackend=0; // 0 auto, 1 XInput, 2 native DS4
@@ -143,13 +143,13 @@ static void init() {
  strcpy_s(gameExeName,executable);
  strcpy_s(logPath,iniPath);strcat_s(logPath,"MUSOUTweaksPC.log");strcat_s(iniPath,configFileNameForExecutable(executable));
 #ifdef PADFIX_PLATFORM_ONLY
- enabled=0;logging=GetPrivateProfileIntA("platform","log",1,iniPath)!=0;
+ enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.42 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.43 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
- enabled=opt("enable",1);logging=opt("log",1)!=0;foregroundOnly=opt("foreground_only",1);
+ enabled=opt("enable",1);logging=opt("log",0)!=0;foregroundOnly=opt("foreground_only",1);
  menuNavigation=opt("dpad_menu_navigation",1);dpadPov=opt("dpad_pov",0);slotConfig=std::clamp(opt("xinput_slot",-1),-1,3);
  leftDeadzone=std::clamp(opt("left_deadzone",20),0,90);
  rightThreshold=std::clamp(opt("right_threshold",55),10,95);
@@ -161,7 +161,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.42 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.43 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
