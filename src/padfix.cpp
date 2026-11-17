@@ -412,7 +412,7 @@ static void init() {
  // it creates), so for that title the arrows go in through SendInput instead.
  bool arrowDefault=!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe")
   ||!_stricmp(gameExeName,"SM5_WIN.exe");
- int arrowAuto=arrowDefault?1:(!_stricmp(gameExeName,"SW2.exe")?2:0);
+ int arrowAuto=arrowDefault?1:(!_stricmp(gameExeName,"SW2.exe")?3:0);
 dpadArrowKeys=dpadArrowKeysSetting<0?arrowAuto:dpadArrowKeysSetting;
 arrowKeyPulseMs=std::clamp(opt("dpad_arrow_pulse_ms",40),10,500);
 arrowKeyGapMs=std::clamp(opt("dpad_arrow_gap_ms",80),10,1000);
