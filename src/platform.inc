@@ -1199,7 +1199,11 @@ static void platformConfigure() {
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("platform",key,def,iniPath);};
  sharedInput=opt("shared_input",1);windowMode=std::clamp(opt("window_mode",1),0,1);
  imeIsolation=opt("disable_game_ime",1);comCompatibility=opt("com_apartment_compat",1);quickClose=opt("close_without_confirmation",1);
- fpsLimit=std::clamp(opt("fps_limit",0),0,240);
+ // Sengoku Musou 2 runs its logic off the frame cadence: uncapped it spins the
+ // menus and the camera far past what the port was built for, so it is limited
+ // to 65 by default. Every other title stays uncapped unless configured.
+ int fpsDefault=!_stricmp(gameExeName,"SW2.exe")?65:0;
+ fpsLimit=std::clamp(opt("fps_limit",fpsDefault),0,240);
  if(windowMode){
   HMODULE user=GetModuleHandleA("user32.dll");auto dpi=(BOOL(WINAPI*)(HANDLE))GetProcAddress(user,"SetProcessDpiAwarenessContext");
   auto threadDpi=(HANDLE(WINAPI*)(HANDLE))GetProcAddress(user,"SetThreadDpiAwarenessContext");

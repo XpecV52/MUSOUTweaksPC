@@ -28,9 +28,15 @@ static int dpadRepeatMs=0, dpadRepeatDelayMs=400;
 static WORD dpadRepeatRaw=0;
 static bool dpadBlinkOff=false, dpadRepeatLogged=false;
 static ULONGLONG dpadHoldSince=0, dpadRepeatAt=0, dpadBlinkUntil=0;
-// 1 = the D-pad also synthesizes the keyboard arrow keys, which is the only
-// menu path some ports accept (SSM6 DX has no patchable menu map).
+// 1 = the D-pad also synthesizes the keyboard arrow keys on the game's own
+// DirectInput keyboard device, which is the only menu path some ports accept
+// (SSM6 DX has no patchable menu map). 2 = the arrows go in through SendInput
+// instead, for titles that read the keyboard only through their window message
+// loop (Sengoku Musou 2). 0 = off.
 static int dpadArrowKeys=0;
+// Hold-to-repeat cadence of the SendInput arrows: a synthesised key never
+// auto-repeats, so a held direction has to be re-pressed by hand.
+static int arrowKeyPulseMs=40, arrowKeyGapMs=80;
 static volatile LONG lastDpadBits=0;
 // Keyboard arrows the adapter is currently reporting as pressed on behalf of the
 // D-pad. The real keyboard device is shared, so only ever OR bits in.
@@ -171,7 +177,7 @@ static bool enterDesired() {
 // so simply adding the pressed bit is enough and releasing the D-pad releases
 // the key. Bits are never cleared, so a physically held arrow keeps working.
 static void mergeArrowKeys(BYTE* keys) {
- WORD want=arrowDesired();
+ WORD want=dpadArrowKeys==1?arrowDesired():0;
  if(want){
   static bool logged=false;
   if(!logged){logged=true;logf("D-pad arrow-key injection active on the shared keyboard");}
@@ -189,7 +195,7 @@ static void mergeArrowKeys(BYTE* keys) {
 // Buffered path: the game only sees transitions, so a key-down/key-up pair has
 // to be appended to whatever the real keyboard already reported.
 static void appendArrowEvents(LPDIDEVICEOBJECTDATA ptr,DWORD* count,DWORD capacity,DWORD flags) {
- WORD want=arrowDesired();WORD changed=(WORD)(want^arrowSent);
+ WORD want=dpadArrowKeys==1?arrowDesired():0;WORD changed=(WORD)(want^arrowSent);
  bool enterNow=enterDesired();bool enterChanged=enterNow!=enterSent;
  if(!changed&&!enterChanged)return;
  DWORD have=*count,room=capacity>have?capacity-have:0;
@@ -218,6 +224,53 @@ static void appendArrowEvents(LPDIDEVICEOBJECTDATA ptr,DWORD* count,DWORD capaci
  *count=have+written;
  static bool logged=false;
  if(!logged&&changed){logged=true;logf("D-pad arrow-key events queued on the buffered keyboard: bits=%x",want);}
+}
+// SendInput path. Sengoku Musou 2 imports nothing from USER32 but MessageBoxA,
+// never calls GetKeyboardState/GetAsyncKeyState and never reads the DirectInput
+// keyboard device it creates, so the only layer it actually sees is the window
+// message loop: exactly where a physical key press arrives. A synthesised key
+// never auto-repeats, so a held direction is chopped into short presses with a
+// gap between them, which is what keeps a menu cursor stepping.
+static const UINT arrowVk[4]={VK_UP,VK_DOWN,VK_LEFT,VK_RIGHT};
+static WORD arrowInputHeld=0,arrowInputDown=0;
+static ULONGLONG arrowInputUpAt=0,arrowInputNextAt=0;
+static void sendArrowVk(int i,bool down) {
+ INPUT in={};in.type=INPUT_KEYBOARD;
+ in.ki.wVk=(WORD)arrowVk[i];
+ in.ki.wScan=(WORD)(MapVirtualKeyA(arrowVk[i],MAPVK_VK_TO_VSC)&0xff);
+ // Arrow keys are extended keys on real hardware (E0 prefix); without the flag
+ // the scancodes would decode as the numeric keypad instead.
+ in.ki.dwFlags=KEYEVENTF_SCANCODE|KEYEVENTF_EXTENDEDKEY|(down?0:KEYEVENTF_KEYUP);
+ SendInput(1,&in,sizeof(in));
+}
+static void releaseArrowKeys() {
+ if(!arrowInputDown)return;
+ for(int i=0;i<4;i++)if(arrowInputDown&(1<<i))sendArrowVk(i,false);
+ arrowInputDown=0;arrowInputHeld=0;arrowInputUpAt=0;arrowInputNextAt=0;
+}
+static void maybeSendArrowKeys() {
+ if(dpadArrowKeys!=2)return;
+ WORD want=arrowDesired();
+ ULONGLONG now=GetTickCount64();
+ if(want!=arrowInputHeld){
+  // Direction changed: release what is no longer wanted and press the new
+  // direction immediately, so a single tap is never swallowed by the cadence.
+  for(int i=0;i<4;i++)if((arrowInputDown&(1<<i))&&!(want&(1<<i))){sendArrowVk(i,false);arrowInputDown=(WORD)(arrowInputDown&~(1<<i));}
+  arrowInputHeld=want;arrowInputUpAt=0;arrowInputNextAt=0;
+  for(int i=0;i<4;i++)if((want&(1<<i))&&!(arrowInputDown&(1<<i))){sendArrowVk(i,true);arrowInputDown=(WORD)(arrowInputDown|(1<<i));}
+  if(arrowInputDown)arrowInputUpAt=now+(ULONGLONG)arrowKeyPulseMs;
+  static bool logged=false;
+  if(!logged&&want){logged=true;logf("D-pad arrow-key SendInput active bits=%x pulse=%dms gap=%dms",want,arrowKeyPulseMs,arrowKeyGapMs);}
+  return;
+ }
+ if(!want)return;
+ if(arrowInputDown&&now>=arrowInputUpAt){
+  for(int i=0;i<4;i++)if(arrowInputDown&(1<<i))sendArrowVk(i,false);
+  arrowInputDown=0;arrowInputNextAt=now+(ULONGLONG)arrowKeyGapMs;
+ }else if(!arrowInputDown&&now>=arrowInputNextAt){
+  for(int i=0;i<4;i++)if(want&(1<<i))sendArrowVk(i,true);
+  arrowInputDown=want;arrowInputUpAt=now+(ULONGLONG)arrowKeyPulseMs;
+ }
 }
 static HMODULE systemDll(const char* name) {
  char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH);strcat_s(path,"\\");strcat_s(path,name);
@@ -272,7 +325,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.46 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.48 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -288,7 +341,7 @@ static void init() {
  dpadPulseMs=std::clamp(opt("dpad_menu_pulse_ms",50),0,1000);
  dpadRepeatMs=std::clamp(opt("dpad_menu_repeat_ms",0),0,1000);
  dpadRepeatDelayMs=std::clamp(opt("dpad_menu_repeat_delay_ms",400),0,3000);
- int dpadArrowKeysSetting=std::clamp(opt("dpad_arrow_keys",-1),-1,1);
+ int dpadArrowKeysSetting=std::clamp(opt("dpad_arrow_keys",-1),-1,2);
  ds4RightX=std::clamp(opt("ds4_right_x",2),0,5);ds4RightY=std::clamp(opt("ds4_right_y",5),0,5);
  int padAxesSetting=std::clamp(opt("pad_axes",0),0,6);
  padAxes=padAxesSetting==0?(dw6?6:2):std::clamp(padAxesSetting,2,6);
@@ -297,7 +350,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.46 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
+ logf("MUSOUTweaksPC 2.48 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -339,10 +392,16 @@ static void init() {
  // SSM6 DX and DW6 PC menus read the keyboard arrows, so the D-pad drives them
  // through the game's own keyboard device instead of the left stick: menus work,
  // the character stays put and the D-pad keeps its own bindings.
+ // Sengoku Musou 2 reads its keyboard only through the window message loop (no
+ // GetKeyboardState anywhere, and it never polls the DirectInput keyboard device
+ // it creates), so for that title the arrows go in through SendInput instead.
  bool arrowDefault=!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe")
   ||!_stricmp(gameExeName,"SM5_WIN.exe");
- dpadArrowKeys=dpadArrowKeysSetting<0?(arrowDefault?1:0):dpadArrowKeysSetting;
- logf("D-pad arrow-key synthesis=%d",dpadArrowKeys);
+ int arrowAuto=arrowDefault?1:(!_stricmp(gameExeName,"SW2.exe")?2:0);
+dpadArrowKeys=dpadArrowKeysSetting<0?arrowAuto:dpadArrowKeysSetting;
+arrowKeyPulseMs=std::clamp(opt("dpad_arrow_pulse_ms",40),10,500);
+arrowKeyGapMs=std::clamp(opt("dpad_arrow_gap_ms",80),10,1000);
+logf("D-pad arrow-key synthesis=%d pulse=%dms gap=%dms",dpadArrowKeys,arrowKeyPulseMs,arrowKeyGapMs);
  // B (bit1) and Start/Menu (bit7) press Enter by default for Orochi Z. Every
  // other title keeps this off: a stray Enter during play is not harmless there.
  int padEnterSetting=opt("pad_enter_buttons",-1);
@@ -499,7 +558,7 @@ static PadState sample() {
  if(connected!=wasConnected){logf("controller %s backend=%s slot=%d",connected?"connected":"disconnected",selectedBackend==2?"DS4":"XInput",selectedSlot);wasConnected=connected;}
  if(!connected||!fg||!wasForeground){armed=false;neutralPending=false;}
  wasForeground=fg;
- if(!connected||!fg){releaseEnterKey();return out;}
+ if(!connected||!fg){releaseEnterKey();releaseArrowKeys();return out;}
  auto& g=s.Gamepad;
  WORD dpad=g.wButtons&15;if(dpad!=loggedDpad){loggedDpad=dpad;logf("controller D-pad bits=%x backend=%s",dpad,selectedBackend==2?"DS4":"XInput");}
  int dz=leftDeadzone*32767/100, rt=rightThreshold*32767/100;
@@ -567,6 +626,9 @@ static PadState sample() {
   }
  }
  lastDpadBits=out.dpad;
+ // Last, so the SendInput path sees this frame's direction rather than the
+ // previous one.
+ maybeSendArrowKeys();
  return out;
 }
 static DIDEVICEINSTANCEA instance() {

@@ -45,7 +45,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 ### 战国无双2(SM2_SengokuMusou2)
 
-手柄适配 + 十字键 + 无边框窗口 + 跳过关闭确认框。另有一条独立的引擎分辨率移植路径：等待受保护的可执行文件解密后，在内存中替换宽高查询函数并校正 HUD/菜单几何，`0/0` 表示跟随当前显示器物理分辨率。帧率限制默认 **65 FPS**（`fps_limit=65`），不修改 Windows 桌面分辨率或刷新率。
+手柄适配 + 十字键 + 无边框窗口 + 跳过关闭确认框。十字键只作为 POV 方向帽和四个独立按钮交给游戏（`dpad_pov=1`、`dpad_as_left_stick=0`），可以单独绑键、也不会带动角色；菜单光标走键盘方向键（`dpad_arrow_keys=2`，`SendInput` 注入）。另有一条独立的引擎分辨率移植路径：等待受保护的可执行文件解密后，在内存中替换宽高查询函数并校正 HUD/菜单几何，`0/0` 表示跟随当前显示器物理分辨率。帧率限制默认 **65 FPS**（`fps_limit` 在程序内对 `SW2.exe` 就取 65），不修改 Windows 桌面分辨率或刷新率。
 
 ### 无双蛇魔Z(MOZ_MusouOrochi Z)
 
@@ -108,6 +108,11 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.48
+- **战国无双2：修复十字键不生效**。这一作的十字键自 2.35 起只作为 POV 方向帽和四个独立按钮转发（`dpad_pov=1`、`dpad_as_left_stick=0`），但它的菜单既不认按钮也不认 POV —— 早先能用是因为 `SM2_Tweaks.ini` 里写的是 `dpad_as_left_stick=1`（把方向桥接进左摇杆轴），桥接一关就彻底没反应。诊断确认 `SW2.exe` 从 `USER32` 只导入了 `MessageBoxA`：既不调 `GetKeyboardState`/`GetAsyncKeyState`，也从不 `GetDeviceState`/`GetDeviceData` 它自己创建的那个键盘设备（日志里只有 `CreateDevice real keyboard=1`，没有任何键盘读取），所以「在游戏键盘设备上塞键」这条老路对它无效。
+- 新增 `dpad_arrow_keys=2`：用 `SendInput` 把方向键注入到与物理按键完全相同的一层，由系统自己把 `WM_KEYDOWN` 交给前台窗口。战国2 自动取 `2`，真三6 DX / 真三5 仍是 `1`。合成按键不会自动重复，所以按住方向时补丁把它切成一次次短按（新配置项 `dpad_arrow_pulse_ms`，默认 `40`；`dpad_arrow_gap_ms`，默认 `80`，合起来约每秒 8 格）。左摇杆完全不动，十字键仍可单独绑键。
+- 战国2 帧率上限的程序内默认值改为 **65**（`fps_limit`），ini 里没有这一项也生效。
+
 ### 2.47
 - **无双蛇魔 Z：修复高分辨率下整屏图层错乱**。引擎的精灵坐标是 12.4 定点数，内部渲染高度超过 2048 就会溢出，补丁被迫启用「精灵 Y 溢出修补」和「背景四边形深度写入 hack」两套补丁；两者叠加后，铺满后备缓冲的背景四边形会按 `D3DCMP_LESSEQUAL` 把后面所有 `z>0` 的层判死，表现为：选择故事/列传多出不该有的背景层、兵营界面整屏发白多层叠加、loading 只剩余底色、即时演算字幕消失。现在 `internal_render_width` / `internal_render_height` 默认跟随桌面分辨率（`0`/`0`），配置说明里写明 **2048 是红线**，超过即触发上述修补。
 - 新增 `orochi_depth_fix`：背景四边形深度写入的处理方式，`0` 完全不改、`1` 每帧所有全屏四边形都禁止写入（旧行为）、`2` 只禁止每帧第一个（默认）。仅在内部渲染高度 > 2048 时才生效。
@@ -137,7 +142,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.47**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.48**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -251,6 +256,11 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Changelog
 
+### 2.48
+- **Sengoku Musou 2: fixed the dead D-pad.** Since 2.35 the D-pad is only forwarded as a POV hat plus four independent buttons (`dpad_pov=1`, `dpad_as_left_stick=0`), but this title's menus read neither. It used to work only because `SM2_Tweaks.ini` carried `dpad_as_left_stick=1` (bridging the directions into the left-stick axes); turning the bridge off left the D-pad with no path at all. Diagnostics confirmed `SW2.exe` imports nothing from `USER32` but `MessageBoxA`: it never calls `GetKeyboardState`/`GetAsyncKeyState`, and it never calls `GetDeviceState`/`GetDeviceData` on the keyboard device it creates (the log shows `CreateDevice real keyboard=1` and no keyboard read at all), so pressing keys on the game's own keyboard device cannot work for it.
+- New `dpad_arrow_keys=2`: the arrows are injected with `SendInput`, i.e. at exactly the layer a physical key press arrives at, and Windows itself delivers the `WM_KEYDOWN` to the foreground window. Sengoku Musou 2 selects `2` automatically; SSM6 DX and DW6 keep `1`. A synthesised key never auto-repeats, so a held direction is chopped into short presses (`dpad_arrow_pulse_ms`, default `40`) separated by gaps (`dpad_arrow_gap_ms`, default `80`) — about eight menu steps per second. The left stick never moves and the D-pad keeps its own bindings.
+- Sengoku Musou 2 now defaults to a **65 FPS** cap in code (`fps_limit`), even when the ini does not carry the key.
+
 ### 2.47
 - **Musou Orochi Z: fixed the whole-screen layering break at high resolutions.** The engine stores sprite coordinates as 12.4 fixed point, so an internal render height above 2048 overflows and the patch is forced to enable both the sprite-Y overflow repair and the background-quad depth-write hack. Together they make the background quad, now stretched over the whole backbuffer, reject every later layer with `z>0` under `D3DCMP_LESSEQUAL`: story/legend select shows a stray background layer, the camp menu is washed out by stacked layers, loading shows nothing but the base colour, and cutscene subtitles disappear. `internal_render_width` / `internal_render_height` now default to the desktop resolution (`0`/`0`) and the option reference states that **2048 is the hard limit** above which those repairs kick in.
 - New `orochi_depth_fix`: how the background quad's depth write is treated — `0` leaves it alone, `1` removes it from every full-screen quad (the old behaviour), `2` removes it from the first one of each frame only (default). Only applies when the internal render height is above 2048.
@@ -280,4 +290,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.47**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.48**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
