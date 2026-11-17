@@ -1,0 +1,37 @@
+[
+  {
+    "id": "0x385",
+    "ptr": "0x6ecbe8",
+    "raw": "b5f8b5a1abd8a5dfa5a2b1d1a143",
+    "cp950": "視窗建立失敗。",
+    "gbk": "跌怠�廿撺⒈选C"
+  },
+  {
+    "id": "0x386",
+    "ptr": "0x6ecbf8",
+    "raw": "a2d2a2f1a2faa2eda2eba2fca2e6aaeca96ca4c6a5a2b1d1a143",
+    "cp950": "ＤｉｒｅｃｔＸ初始化失敗。",
+    "gbk": "⒁ⅠⅩ㈨㈦Ⅻ㈡�飑lてア毖�C"
+  },
+  {
+    "id": "0x38a",
+    "ptr": "0x6ecc58",
+    "raw": "b943c0b8a874b2ceaaeca96ca4c6a5a2b1d1a143",
+    "cp950": "遊戲系統初始化失敗。",
+    "gbk": "笴栏╰参�飑lてア毖�C"
+  },
+  {
+    "id": "0x38b",
+    "ptr": "0x6ecc70",
+    "raw": "b9cfb9b3b8cbb86dabd8a5dfa5a2b1d1a143",
+    "cp950": "圖像裝置建立失敗。",
+    "gbk": "瓜钩杆竚�廿撺⒈选C"
+  },
+  {
+    "id": "0x387",
+    "ptr": "0x6ecc14",
+    "raw": "aaeca96ca4c6a5a2b1d1a143",
+    "cp950": "初始化失敗。",
+    "trigger": "CoInitializeEx(NULL, COINIT_MULTITHREADED=0) returned FAILED HRESULT at 0x5AED34"
+  }
+]

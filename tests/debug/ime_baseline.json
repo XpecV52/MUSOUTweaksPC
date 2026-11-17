@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-14",
+  "timezone": "Asia/Shanghai",
+  "kind": "Observed old 1.2 startup error, ordinary Win32 window inspection",
+  "pid": 33540,
+  "foreground_hkl": "0x08040804",
+  "launcher_hkl": "0x08040804",
+  "dialog_class": "#32770",
+  "static_text_ansi_hex": "aaeca96ca4c6a5a2b1d1a143",
+  "decoded_cp950": "初始化失敗。",
+  "static_game_string_id": "0x387",
+  "failing_callsite": "0x005AED34: CoInitializeEx(NULL, COINIT_MULTITHREADED)",
+  "original_failure_hresult": null,
+  "limitation": "The original failure HRESULT was not retained. RPC_E_CHANGED_MODE is a compatible failure condition reproduced with real Windows COM in tests, not directly measured in this old failed process."
+}

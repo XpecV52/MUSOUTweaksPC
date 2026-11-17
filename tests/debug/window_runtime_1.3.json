@@ -1,0 +1,16 @@
+{
+  "window_rect_physical": [
+    0,
+    0,
+    2560,
+    1440
+  ],
+  "client_pixels_physical": [
+    2560,
+    1440
+  ],
+  "window_dpi": 120,
+  "style": "0x94000000",
+  "extended_style": "0x0",
+  "topmost": false
+}

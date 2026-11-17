@@ -1,5 +1,17 @@
-build/
+# 构建产物（package.py 直接打包这两个 DLL，故保留入库）
+build/*
+!build/dinput8.dll
+!build/dinput8-platform.dll
 *.lib
 *.exp
 *.obj
+*.map
 __pycache__/
+
+# 调试中间产物：抓帧、界面截图、一次性分析目录
+analysis/
+*.bmp
+*.png
+
+# 发布包不进版本库，历史清单见 RELEASES.md
+*.zip

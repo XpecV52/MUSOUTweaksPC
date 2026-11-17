@@ -1,0 +1,23 @@
+[
+  {
+    "exception": "0x80000003",
+    "address": "0x7ffee35a2239",
+    "module": "\\\\?\\C:\\Windows\\System32\\ntdll.dll",
+    "offset": "0x122239",
+    "params": [
+      "0x0"
+    ]
+  },
+  {
+    "exception": "0x4000001f",
+    "address": "0x776a8b88",
+    "module": "\\\\?\\C:\\Windows\\SysWOW64\\ntdll.dll",
+    "offset": "0x118b88",
+    "params": [
+      "0x0"
+    ]
+  },
+  {
+    "exit_code": "0x1"
+  }
+]

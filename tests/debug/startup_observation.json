@@ -1,0 +1,23 @@
+{
+  "foreground_hkl": "0x8040804",
+  "launcher_hkl": "0x8040804",
+  "existing": false,
+  "pid": 28420,
+  "observations": [
+    {
+      "elapsed": 0.0,
+      "windows": []
+    },
+    {
+      "elapsed": 0.2,
+      "windows": [
+        {
+          "hwnd": 41224906,
+          "class": "Orochi_Z_PC",
+          "text": "礚蛮OROCHI 矰臸 Z",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
