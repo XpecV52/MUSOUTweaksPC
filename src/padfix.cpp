@@ -145,7 +145,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.43 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.44 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -161,7 +161,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.43 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.44 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -194,7 +194,11 @@ static void init() {
  }
  if(!nativeMenuMap&&!nativeMenuMapCandidateCount)logf("native menu map unavailable for this EXE; D-pad buttons and POV remain available");
  platformConfigure();
- dpadAsLeftStick=dpadAsLeftStickSetting<0?!_stricmp(gameExeName,"ShinSangokumusou3.exe"):dpadAsLeftStickSetting;
+ // Auto mode bridges the D-pad to the left stick for the titles whose native
+ // menu map we cannot locate: SSM3 PC and SSM6 DX both read menus from the left
+ // stick, so their D-pad buttons alone never move the cursor.
+ bool dpadBridgeDefault=!_stricmp(gameExeName,"ShinSangokumusou3.exe")||!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe");
+ dpadAsLeftStick=dpadAsLeftStickSetting<0?dpadBridgeDefault:dpadAsLeftStickSetting;
  logf("D-pad to left-stick bridge=%d",dpadAsLeftStick);
 #endif
 }

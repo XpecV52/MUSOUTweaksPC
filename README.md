@@ -98,9 +98,19 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 真三6 DX 繁体版附带的 MOD 来源与授权见 `THIRD_PARTY_MODS.md`。
 
+## 更新记录
+
+### 2.44
+- **真三国无双6 with 猛将传 DX**：修复开启 `native_resolution` 后画面卡死（按键有声音、画面不刷新）。根因是引擎按自己请求的分辨率创建深度模板缓冲；后备缓冲区放大后视口超出该表面，D3D9 会拒绝所有 `Clear` 和带深度测试的绘制，画面停在旧帧。现在深度模板缓冲会同步放大到后备缓冲区尺寸，**无边框缩放与高分辨率 MOD 可同时使用**。
+- **真三国无双6 with 猛将传 DX**：`dpad_as_left_stick` 改为默认开启。该作找不到游戏原生菜单映射表，菜单只认左摇杆，十字键必须桥接到左摇杆才能移动菜单光标。
+
+### 2.43
+- 新增真三国无双7 with 猛将传、无双蛇魔 Z 的视野调整组合键。
+- 日志收集默认全关；战国无双2 帧率限制默认 65。
+
 ## 版本
 
-当前版本 **2.43**。历史发布包的名称、大小与 SHA-256 见 `RELEASES.md`。
+当前版本 **2.44**。历史发布包的名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -204,6 +214,16 @@ python package.py   :: package both DLLs
 
 Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented in `THIRD_PARTY_MODS.md`.
 
+## Changelog
+
+### 2.44
+- **SSM6DX (Dynasty Warriors 7 DX)**: fixed the frozen picture with `native_resolution` enabled (input and audio kept working while the screen stopped updating). The engine creates its depth-stencil surface at the resolution it requested; once the backbuffer is enlarged the viewport no longer fits that surface, so D3D9 rejects every `Clear` and every depth-tested draw and the frame stays stale. The depth-stencil surface is now grown to the backbuffer size, so **borderless scaling and external high-resolution mods can be used together**.
+- **SSM6DX**: `dpad_as_left_stick` now defaults to on. No native menu map can be located for this title and its menus only read the left stick, so the D-pad has to be bridged to move the menu cursor.
+
+### 2.43
+- Added the camera-distance hotkeys for SSM7 and Musou Orochi Z.
+- Log collection is off by default; the Sengoku Musou 2 frame limiter defaults to 65.
+
 ## Version
 
-Current release: **2.43**. Names, sizes and SHA-256 of past packages are listed in `RELEASES.md`.
+Current release: **2.44**. Names, sizes and SHA-256 of past packages are listed in `RELEASES.md`.

@@ -100,7 +100,7 @@ static std::unordered_map<void*,IDirect3DPixelShader9*> nativeScaleShaders;
 static std::unordered_map<void*,NativeScaleSize> nativeScaleSizes;
 static std::unordered_set<void*> nativeScaleFailed;
 static std::unordered_set<void*> nativeOutputDevices,loggedNativeOutputDevices,loggedNativeOutputFailures;
-static std::unordered_set<void*> loggedScaleDevices,loggedScaleFailures;
+static std::unordered_set<void*> loggedScaleDevices,loggedScaleFailures,loggedScaleSkip;
 static std::unordered_set<void*> loggedPrimaryPresentParameters;
 static void* originalMethod(void* object,size_t index) {
  void** table=*(void***)object;
@@ -336,11 +336,27 @@ static bool scaleBackbufferToNative(IDirect3DDevice9* d,const RECT* source,const
  D3DSURFACE_DESC desc={};HRESULT descHr=back->GetDesc(&desc);
  if(FAILED(descHr)||!desc.Width||!desc.Height){back->Release();return false;}
  RECT crop={0,0,(LONG)desc.Width,(LONG)desc.Height};
+ // The viewport the game set for the frame being presented is the only
+ // reliable description of where its content actually sits. The tracked
+ // CreateDevice/Reset size goes stale as soon as the game adopts a different
+ // render size at runtime, and cropping with it cuts a slice out of a
+ // correctly rendered frame.
+ D3DVIEWPORT9 viewport={};bool haveViewport=SUCCEEDED(d->GetViewport(&viewport))&&viewport.Width&&viewport.Height;
+ bool viewportFillsBuffer=haveViewport&&viewport.X==0&&viewport.Y==0&&viewport.Width>=desc.Width&&viewport.Height>=desc.Height;
+ UINT outputW=0,outputH=0;getNativeDisplaySize(outputW,outputH);
+ // A backbuffer that already matches the output size and is filled by the
+ // game itself needs no second scale: resampling it through a stale crop is
+ // what destroyed the image on SSM6 DX.
+ if(viewportFillsBuffer&&desc.Width==outputW&&desc.Height==outputH){
+  bool logSkip=false;{std::lock_guard<std::mutex> lock(tableMutex);logSkip=loggedScaleSkip.insert(d).second;}
+  if(logSkip)logf("D3D scale skipped: backbuffer %ux%u is already the output size and the game viewport fills it",desc.Width,desc.Height);
+  back->Release();return false;
+ }
  bool sourceValid=source&&source->left>=0&&source->top>=0&&source->right<=(LONG)desc.Width&&source->bottom<=(LONG)desc.Height&&source->right>source->left&&source->bottom>source->top;
- // Respect an explicit smaller source rectangle. A full-backbuffer Present
- // rectangle does not describe the game's logical viewport, so prefer the
- // tracked viewport size in that case.
+ // Respect an explicit smaller source rectangle, then the live viewport, and
+ // only then the tracked logical size as a last resort.
  if(sourceValid&&((UINT)(source->right-source->left)<desc.Width||(UINT)(source->bottom-source->top)<desc.Height))crop=*source;
+ else if(haveViewport&&viewport.X>=0&&viewport.Y>=0&&viewport.X+(LONG)viewport.Width<=(LONG)desc.Width&&viewport.Y+(LONG)viewport.Height<=(LONG)desc.Height&&(viewport.Width<desc.Width||viewport.Height<desc.Height))crop={(LONG)viewport.X,(LONG)viewport.Y,(LONG)viewport.X+(LONG)viewport.Width,(LONG)viewport.Y+(LONG)viewport.Height};
  else if(logicalW&&logicalH&&logicalW<=desc.Width&&logicalH<=desc.Height&&(logicalW<desc.Width||logicalH<desc.Height))crop={0,0,(LONG)logicalW,(LONG)logicalH};
  else if(sourceValid)crop=*source;
  UINT sourceW=(UINT)(crop.right-crop.left),sourceH=(UINT)(crop.bottom-crop.top);
@@ -537,6 +553,32 @@ static HRESULT WINAPI platformSetScissorRect(IDirect3DDevice9* d,const RECT* req
  }
  return fn(d,requested);
 }
+static std::unordered_set<void*> loggedDepthResizes;
+static HRESULT WINAPI platformCreateDepthStencilSurface(IDirect3DDevice9* d,UINT width,UINT height,D3DFORMAT format,D3DMULTISAMPLE_TYPE multiSample,DWORD quality,BOOL discard,IDirect3DSurface9** surface,HANDLE* sharedHandle) {
+ using Fn=HRESULT(WINAPI*)(IDirect3DDevice9*,UINT,UINT,D3DFORMAT,D3DMULTISAMPLE_TYPE,DWORD,BOOL,IDirect3DSurface9**,HANDLE*);
+ auto fn=(Fn)originalMethod(d,29);if(!fn)return D3DERR_INVALIDCALL;
+ // The engine allocates its depth buffer from the resolution it asked for.
+ // Once the backbuffer has been enlarged to the desktop size the viewport no
+ // longer fits that surface, so D3D9 rejects every Clear and every depth-tested
+ // draw: the frame stays stale while audio and input keep working. Grow the
+ // depth surface to the backbuffer so the whole frame stays valid.
+ if(nativeResolution){
+  bool ours=false;{std::lock_guard<std::mutex> lock(tableMutex);ours=renderDevices.count(d)!=0;}
+  if(ours){
+   IDirect3DSurface9* back=nullptr;
+   if(SUCCEEDED(d->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back))&&back){
+    D3DSURFACE_DESC desc={};
+    if(SUCCEEDED(back->GetDesc(&desc))&&desc.Width>width&&desc.Height>height){
+     bool first=false;{std::lock_guard<std::mutex> lock(tableMutex);first=loggedDepthResizes.insert(d).second;}
+     if(first)logf("D3D depth-stencil enlarged from %ux%u to backbuffer %ux%u",width,height,desc.Width,desc.Height);
+     width=desc.Width;height=desc.Height;
+    }
+    back->Release();
+   }
+  }
+ }
+ return fn(d,width,height,format,multiSample,quality,discard,surface,sharedHandle);
+}
 static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,const RECT* destination,HWND overrideWindow,const RGNDATA* dirty) {
  if(presentReentry){reportReentry("Present");return D3D_OK;}
  ReentryGuard guard(presentReentry);
@@ -631,6 +673,10 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
    if(((legacyInternalResolutionEnabled()&&nativeOutput)||nativeResolution)&&(!logicalW||!logicalH))getNativeDisplaySize(logicalW,logicalH);
    {std::lock_guard<std::mutex> lock(tableMutex);renderDevices.insert(*out);if(nativeResolution||(legacyInternalResolutionEnabled()&&nativeOutput))logicalRenderSizes[*out]={logicalW,logicalH};if(nativeOutput)nativeOutputDevices.insert(*out);}
    hookMethod(*out,16,(void*)platformReset);
+   // The engine sizes its depth buffer from the resolution it asked for. Once the
+   // backbuffer is enlarged that surface no longer covers the viewport, so D3D9
+   // rejects every Clear and every depth-tested draw and the picture freezes.
+   if(nativeResolution)hookMethod(*out,29,(void*)platformCreateDepthStencilSurface);
    if(!_stricmp(gameExeName,"OROCHI_Z_TC.exe")&&internalRenderHeight>2048){
     hookMethod(*out,82,(void*)orochiDrawIndexedPrimitive);
     logf("Orochi high-resolution background-only depth-write correction installed");
