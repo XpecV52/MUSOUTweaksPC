@@ -235,6 +235,21 @@ static const UINT arrowVk[4]={VK_UP,VK_DOWN,VK_LEFT,VK_RIGHT};
 static WORD arrowInputHeld=0,arrowInputDown=0;
 static ULONGLONG arrowInputUpAt=0,arrowInputNextAt=0;
 static void sendArrowVk(int i,bool down) {
+ if(dpadArrowKeys==3){
+  // Message path: nothing touches the DirectInput device, so a title that reads
+  // its pad/keys through DirectInput cannot see these at all.
+  // sample() only runs while the game owns the foreground window, so that is
+  // also the window the messages belong on.
+  HWND target=GetForegroundWindow();
+  if(!target)return;
+  const LPARAM scan=(LPARAM)((MapVirtualKeyA(arrowVk[i],MAPVK_VK_TO_VSC)&0xff)<<16);
+  // Arrow keys are extended keys on real hardware; bit 24 must match or a title
+  // that inspects it treats the press as numeric-keypad input.
+  const LPARAM extended=(LPARAM)0x01000000;
+  if(down)PostMessageA(target,WM_KEYDOWN,(WPARAM)arrowVk[i],0x00000001|scan|extended);
+  else PostMessageA(target,WM_KEYUP,(WPARAM)arrowVk[i],(LPARAM)0xC0000001|scan|extended);
+  return;
+ }
  INPUT in={};in.type=INPUT_KEYBOARD;
  in.ki.wVk=(WORD)arrowVk[i];
  in.ki.wScan=(WORD)(MapVirtualKeyA(arrowVk[i],MAPVK_VK_TO_VSC)&0xff);
@@ -249,7 +264,7 @@ static void releaseArrowKeys() {
  arrowInputDown=0;arrowInputHeld=0;arrowInputUpAt=0;arrowInputNextAt=0;
 }
 static void maybeSendArrowKeys() {
- if(dpadArrowKeys!=2)return;
+ if(dpadArrowKeys<2)return;
  WORD want=arrowDesired();
  ULONGLONG now=GetTickCount64();
  if(want!=arrowInputHeld){
@@ -260,7 +275,7 @@ static void maybeSendArrowKeys() {
   for(int i=0;i<4;i++)if((want&(1<<i))&&!(arrowInputDown&(1<<i))){sendArrowVk(i,true);arrowInputDown=(WORD)(arrowInputDown|(1<<i));}
   if(arrowInputDown)arrowInputUpAt=now+(ULONGLONG)arrowKeyPulseMs;
   static bool logged=false;
-  if(!logged&&want){logged=true;logf("D-pad arrow-key SendInput active bits=%x pulse=%dms gap=%dms",want,arrowKeyPulseMs,arrowKeyGapMs);}
+  if(!logged&&want){logged=true;logf("D-pad arrow-key injection active mode=%d bits=%x pulse=%dms gap=%dms",dpadArrowKeys,want,arrowKeyPulseMs,arrowKeyGapMs);}
   return;
  }
  if(!want)return;
@@ -341,7 +356,7 @@ static void init() {
  dpadPulseMs=std::clamp(opt("dpad_menu_pulse_ms",50),0,1000);
  dpadRepeatMs=std::clamp(opt("dpad_menu_repeat_ms",0),0,1000);
  dpadRepeatDelayMs=std::clamp(opt("dpad_menu_repeat_delay_ms",400),0,3000);
- int dpadArrowKeysSetting=std::clamp(opt("dpad_arrow_keys",-1),-1,2);
+ int dpadArrowKeysSetting=std::clamp(opt("dpad_arrow_keys",-1),-1,3);
  ds4RightX=std::clamp(opt("ds4_right_x",2),0,5);ds4RightY=std::clamp(opt("ds4_right_y",5),0,5);
  int padAxesSetting=std::clamp(opt("pad_axes",0),0,6);
  padAxes=padAxesSetting==0?(dw6?6:2):std::clamp(padAxesSetting,2,6);

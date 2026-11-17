@@ -815,6 +815,7 @@ static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTab
  SYSTEM_INFO info={};GetSystemInfo(&info);uintptr_t address=(uintptr_t)info.lpMinimumApplicationAddress,maximum=(uintptr_t)info.lpMaximumApplicationAddress;
  unsigned hooked=0;void* firstTable=nullptr;BYTE scanBuffer[64*1024];
  while(address<maximum){
+  if(hooked)break;
   MEMORY_BASIC_INFORMATION region={};SIZE_T queried=VirtualQuery((void*)address,&region,sizeof(region));if(!queried)break;
   uintptr_t start=(uintptr_t)region.BaseAddress,end=start+region.RegionSize;
   DWORD protection=region.Protect&0xff;
@@ -837,7 +838,9 @@ static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTab
       if((uintptr_t)table+119*sizeof(void*)>end)continue;
       if(table==probeTable||!d3d9DeviceTable(table,moduleBase,moduleEnd,present,reset))continue;
       hookTable(table,17,(void*)platformPresent);hookTable(table,16,(void*)platformReset);
-      if(!firstTable)firstTable=table;hooked++;
+      // One table is enough: an overlay can leave a second matching copy behind,
+      // and pacing twice per frame would halve the frame rate instead of capping it.
+      if(!firstTable)firstTable=table;hooked++;break;
      }
    }
     cursor+=chunkSize;
@@ -871,10 +874,16 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
  if(FAILED(hr)||!device){DestroyWindow(probe);api->Release();logf("late D3D9 hook failed: probe CreateDevice hr=%08lx",hr);return 0;}
  void** probeTable=*(void***)device;void* present=probeTable[17];void* reset=probeTable[16];
  logf("late D3D9 watcher started present=%p reset=%p",present,reset);
- if(GetModuleHandleA("gameoverlayrenderer.dll")){
-  logf("late D3D9 watcher skipped: Steam overlay is loaded and the early CreateDevice hook owns the game device");
-  device->Release();DestroyWindow(probe);api->Release();return 0;
- }
+ // An overlay can wrap a device table, and hooking a wrapper we already own ends
+ // in unbounded Present recursion. That only becomes a risk once the early
+ // CreateDevice hook owns the game device, and the ownership check inside the
+ // loop below catches exactly that case before any table is touched. Skipping
+ // the scan outright because the overlay merely exists is what left Sengoku
+ // Musou 2 with no Present hook at all: that build resolves Direct3DCreate9
+ // before dinput8 is loaded, so the early hook never fires and the scan is the
+ // only route to Present (and therefore to the frame limiter).
+ if(GetModuleHandleA("gameoverlayrenderer.dll"))
+  logf("late D3D9 watcher: Steam overlay present, waiting for the early CreateDevice hook to claim the device first");
  for(unsigned attempt=1;attempt<=120;attempt++){
   // Give the game time to create its first device through the early hook so the
   // ownership check below sees it; a late-loading dinput8 simply keeps waiting.
@@ -884,6 +893,10 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
    logf("late D3D9 watcher stopped after %u scans: early CreateDevice hook already hooked the game device",attempt-1);
    device->Release();DestroyWindow(probe);api->Release();return 0;
   }
+  // Give the early Direct3DCreate9 hook a few seconds to claim the device before
+  // falling back to the heap scan: the scan is the expensive, riskier route and
+  // is only needed by builds that resolve Direct3DCreate9 before this DLL loads.
+  if(attempt<4){Sleep(500);continue;}
   unsigned hooked=hookExistingD3D9Tables(present,reset,probeTable);
   if(hooked){logf("late D3D9 watcher attached after %u scans",attempt);device->Release();DestroyWindow(probe);api->Release();return 0;}
   if(attempt%20==0)logf("late D3D9 watcher waiting for game device attempt=%u",attempt);
