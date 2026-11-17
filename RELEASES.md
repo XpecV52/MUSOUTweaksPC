@@ -12,10 +12,11 @@
 | `v1.0.0` | `MUSOUTweaksPC_V1.0.0.zip` | 432822 | 见发布页 |
 | `v1.0.1` | `MUSOUTweaksPC_V1.0.1.zip` | 1091191 | `a03d7b92ecd4d5292b52c93d3ec03ae3b627f83caf22b6b8b15a0b882f078648` |
 | `v1.0.2` | `MUSOUTweaksPC_V1.0.2.zip` | 1245363 | `191254f769cac0ea19447271935d4e11d0e217679e6f7ffb8864d49c3963de97` |
+| `v1.0.3` | `MUSOUTweaksPC_V1.0.3.zip` | 1258553 | `cac436801010919ebdd6b92f3575a7d973c69a197379799788ff7944ca76cda9` |
 
 `v1.0.1` 对应内部构建 **2.45**、`v1.0.2` 对应 **2.46**、`v1.0.3` 对应 **2.47**（dll 日志横幅里打印的是构建号 `MUSOUTweaksPC 2.47`，不是发布号）。
 
-**2.47 尚未发布**，本地构建已可用。主要内容：
+`v1.0.3` 内容（内部构建 **2.47**）：
 
 - 无双蛇魔 Z：`internal_render_width` / `internal_render_height` 默认改为跟随桌面分辨率。引擎精灵坐标是 12.4 定点数，高度超过 2048 即溢出，补丁会被迫启用精灵 Y 修补与背景深度写入修补，两者叠加会破坏图层顺序（选择故事/列传多出背景层、兵营整屏发白、loading 只剩底色、即时演算字幕消失）。
 - 无双蛇魔 Z：新增 `orochi_depth_fix`（0/1/2）。
@@ -43,6 +44,20 @@ python publish.py V1.0.3 --notes _rel\NOTES_V1.0.3.md
 ```
 
 `publish.py` 走 `api.github.com`（本机 `gh` 不可用），token 取自 git 凭据助手；同名 asset 会先删再传，所以可以反复跑。
+
+### V1.0.3 内容
+
+整包 `MUSOUTweaksPC_V1.0.3.zip` 内按游戏分类，每个游戏一个子包：
+
+| 子包 | 大小 (B) | 游戏 | 适配版本 | 安装文件 |
+| --- | ---: | --- | --- | --- |
+| `MOZTweaks_V1.0.3.zip` | 143818 | 无双蛇魔Z / Musou Orochi Z | `V1.0.0.0` | `dinput8.dll` + `OrochiZPadX.ini` |
+| `SSM3Tweaks_V1.0.3.zip` | 140855 | 真三国无双3 / Dynasty Warriors 4: Hyper | 游侠繁体汉化 `V0.1.1.0`（`2.0.0.0`） | `dinput8.dll` + `SSM3_Tweaks.ini` |
+| `SSM4SPTweaks_V1.0.3.zip` | 140855 | 真三国无双4 Special / Dynasty Warriors 5 Special | `V1.0.0.0` | `dinput8.dll` + `SSM4_Tweaks.ini` |
+| `SSM5Tweaks_V1.0.3.zip` | 143174 | 真三国无双5 / Dynasty Warriors 6 | `V1.0.0.1` | `dinput8.dll` + `SSM5_Tweaks.ini` |
+| `SSM6DXTweaks_V1.0.3.zip` | 430522 | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | Steam `V1.0.0.0` | `dinput8.dll` + `SSM6_Tweaks.ini`（另附 `d3dx9_43.dll` + `mods/Fix_for_SM6*`） |
+| `SSM7wMTweaks_V1.0.3.zip` | 116298 | 真三国无双7 with 猛将传 / Dynasty Warriors 8 | Steam `V1.0.4.0` | `dinput8.dll`（platform-only 版）+ `SSM7_Tweaks.ini` |
+| `SM2Tweaks_V1.0.3.zip` | 140516 | 战国无双2 / Sengoku Musou 2 | `V1.0.0.0` | `dinput8.dll` + `SM2_Tweaks.ini` |
 
 ### V1.0.2 内容
 

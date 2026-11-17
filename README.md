@@ -137,7 +137,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.47**，对外发布版本 **V1.0.2**（2.47 尚未发布）。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.47**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -280,4 +280,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.47**; public release: **V1.0.2** (2.47 not released yet). Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.47**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
