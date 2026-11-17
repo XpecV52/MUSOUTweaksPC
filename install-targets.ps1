@@ -1,17 +1,19 @@
 param(
     [string]$Shin3 = 'E:\Games\Non-Steam\Shin Sangokumusou 3\game',
     [string]$Shin4 = 'E:\Games\Non-Steam\Shin Sangokumusou 4',
+    [string]$Shin5 = 'E:\Games\Non-Steam\Shin Sangokumusou 5',
     [string]$Sengoku2 = 'E:\Games\Non-Steam\Sengoku Musou 2',
     [string]$Dynasty8 = 'F:\SteamLibrary\steamapps\common\Dynasty Warriors 8'
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$patchedGames = @('ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch','SW2')
+$patchedGames = @('ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch','SW2','SM5_WIN')
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in $patchedGames }
 if ($running) { throw "Exit patched games before installing: $($running.ProcessName -join ', ')" }
 $targets = @(
     @{ dir = $Shin3; dll = 'build\dinput8.dll'; ini = 'SSM3_Tweaks.ini' },
     @{ dir = $Shin4; dll = 'build\dinput8.dll'; ini = 'SSM4_Tweaks.ini' },
+    @{ dir = $Shin5; dll = 'build\dinput8.dll'; ini = 'SSM5_Tweaks.ini' },
     @{ dir = $Sengoku2; dll = 'build\dinput8.dll'; ini = 'SM2_Tweaks.ini' },
     @{ dir = $Dynasty8; dll = 'build\dinput8-platform.dll'; ini = 'SSM7_Tweaks.ini' }
 )

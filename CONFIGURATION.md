@@ -1,4 +1,4 @@
-﻿# MUSOUTweaksPC 2.45 配置说明
+﻿# MUSOUTweaksPC 2.46 配置说明
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
 
@@ -7,6 +7,7 @@
 | 无双蛇魔 Z (`OROCHI_Z_TC.exe`) | `OrochiZPadX.ini` |
 | 真三国无双3 / Dynasty Warriors 4: Hyper (`ShinSangokumusou3.exe`) | `SSM3_Tweaks.ini` |
 | 真三国无双4 Special / Dynasty Warriors 5 Special (`SM4_WIN.exe`、`SS4*.exe`) | `SSM4_Tweaks.ini` |
+| 真三国无双5 / Dynasty Warriors 6 (`SM5_WIN.exe`) | `SSM5_Tweaks.ini` |
 | 真三国无双6 猛将传 DX (`SM6TC.exe`、`SM6EN.exe`、`SM6JP.exe`) | `SSM6_Tweaks.ini` |
 | 战国无双2 (`SW2.exe`) | `SM2_Tweaks.ini` |
 | 真三国无双7 / Dynasty Warriors 8 (`Launch.exe`) | `SSM7_Tweaks.ini` |
@@ -30,10 +31,14 @@
 | `backend` | `0` | 手柄来源：`0` 自动（优先 XInput，未找到时选择原生 Sony DS4）；`1` 只使用 XInput；`2` 只使用原生 Sony DS4。自动模式连接后保持当前来源，断开后再重新选择。|
 | `xinput_slot` | `-1` | XInput 手柄槽位。`-1` 自动选第一个在线槽位；`0`–`3` 固定使用对应槽位。指定槽位会优先于自动选择。|
 | `foreground_only` | `1` | 仅游戏位于前台时把手柄状态交给游戏。建议保持开启，以免切到桌面或其他程序时游戏仍接收手柄输入。|
+| `pad_name` | 按游戏 | 虚拟手柄向游戏报告的产品名。空值等于自动：真三5 取 `Controller (XBOX 360 For Windows)`，其余作品取 `MUSOUTweaksPC Gamepad`。真三5 只认它内置名单里的手柄名（Xbox 360 手柄、罗技 ChillStream、ELECOM/SANWA 等），名字不在名单里时游戏能枚举到设备但不会选中，表现成手柄完全没反应。|
+| `pad_axes` | `0` | 虚拟手柄暴露的轴数量：`2` 只有左摇杆（老行为），`6` 再加上扳机与右摇杆（X/Y/Z/Rx/Ry/Rz）。`0` 或 `-1` 自动：真三5 取 `6`（该作用右摇杆转视角），其余作品取 `2`。|
 | `dpad_menu_navigation` | `1` | 对已识别的游戏版本，将十字键加入独立菜单方向映射；未识别的版本会跳过菜单映射。不会把十字键伪装成键盘方向键。|
-| `dpad_as_left_stick` | `0` | `0` 保持十字键按钮/POV 与左摇杆轴独立；`1` 才额外同步方向到左摇杆轴；`2` 只在方向变化时点动一小段。左摇杆是移动轴，桥接后角色会跟着走，只有菜单导航无路可走时才用 `1`/`2`。|
-| `dpad_menu_pulse_ms` | `50` | `dpad_as_left_stick=2` 的点动脉冲长度，单位毫秒，范围 `0`–`1000`。|
-| `dpad_arrow_keys` | `-1` | `1` 在游戏自己的 DirectInput 键盘设备上按下方向键；`0` 关闭；`-1` 自动（仅真三6 DX 默认开启）。真三6 DX 以缓冲模式读键盘（`GetDeviceData`），补丁会成对追加 `DIK_UP/DOWN/LEFT/RIGHT` 的按下与松开事件，菜单光标可动而左摇杆不动，**角色不会行走**。|
+| `dpad_as_left_stick` | `0` | `0` 保持十字键按钮/POV 与左摇杆轴独立；`1` 才额外同步方向到左摇杆轴；`2` 只在方向变化时点动一小段。左摇杆是移动轴，桥接后角色会跟着走，只有菜单导航无路可走时才用 `1`/`2`。**所有作品（含真三5）默认都是 `0`**：十字键只走 POV 方向帽和独立按钮，可以单独绑键，也不会带动角色。菜单光标走 `dpad_arrow_keys`。|
+| `dpad_menu_pulse_ms` | `50` | `dpad_as_left_stick=2` 的点动脉冲长度，单位毫秒，范围 `0`–`1000`。同时用作长按连发的松开时长。|
+| `dpad_menu_repeat_ms` | `0`（真三5 为 `120`） | 长按连发周期，单位毫秒，范围 `0`–`1000`；`0` 关闭连发。菜单是「按一次走一格」的类型时，按住不放光标就不动了，开启后补丁会把持续按住的方向周期性松开 `dpad_menu_pulse_ms` 毫秒，游戏就会收到一次新的「按下」，光标持续移动。连发作用于 POV 方向帽、四个十字键按钮和方向键注入；只有显式开了 `dpad_as_left_stick` 才会影响到摇杆轴，默认 `0` 时左摇杆完全不动。|
+| `dpad_menu_repeat_delay_ms` | `400` | 开始连发前的等待时间，单位毫秒，范围 `0`–`3000`。短按不受影响，按住超过这个时间才开始重复。|
+| `dpad_arrow_keys` | `-1` | `1` 在游戏自己的 DirectInput 键盘设备上按下方向键；`0` 关闭；`-1` 自动（真三6 DX 与真三5 默认开启）。真三6 DX 与真三5 都以缓冲模式读键盘（`GetDeviceData`），补丁会成对追加 `DIK_UP/DOWN/LEFT/RIGHT` 的按下与松开事件，菜单光标可动而左摇杆不动，**角色不会行走**，十字键本身仍作为 POV/按钮可单独绑键。|
 | `left_deadzone` | `20` | 左摇杆死区百分比，范围 `0`–`90`。数值调低会更灵敏，也更容易受摇杆漂移影响；调高会减少漂移，但需要推得更远。|
 | `right_threshold` | `55` | 右摇杆触发数字方向按钮的阈值百分比，范围 `10`–`95`。降低会更容易触发视角方向，提高可减少轻推时误触。右摇杆映射为四个独立按钮，不是连续模拟轴。|
 | `trigger_threshold` | `40` | LT/RT 触发按钮的阈值，范围 `1`–`254`。数值较低时扳机轻压即可触发。|

@@ -61,6 +61,8 @@ static bool forceNativeBuffer=false;
 static bool deferGetProcHook=false;
 static bool lateD3DHookAttempted=false;
 static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int height);
+static const char* expectedMainWindowClass();
+static void startMainWindowWatch();
 static bool isSsm6DxExecutable(const char* name) {
  return !_stricmp(name,"SM6TC.exe")||!_stricmp(name,"SM6EN.exe")||!_stricmp(name,"SM6JP.exe");
 }
@@ -1195,6 +1197,7 @@ static void platformConfigure() {
  }
  logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_aspect_mode=%d scale_filter=%u single_present=%d IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleAspectMode,scaleFilter,singlePresentMode,imeIsolation,comCompatibility,quickClose,fpsLimit);
  attachExistingMainWindow();
+ startMainWindowWatch();
  if(windowMode||fpsLimit>0)attachLateD3DPresentHook();
 }
 // The inherited GS sprite format stores Y in unsigned 12.4 fixed point
@@ -1316,6 +1319,9 @@ static bool chooseMainWindowA(LPCSTR cls,LPCSTR title,HWND parent) {
  if(gameWindow||parent||ignoredWindowClassA(cls))return false;
  if(cls&&(ULONG_PTR)cls>65535) {
   if(!strcmp(cls,"Orochi_Z_PC"))return true;
+  // DW6 PC registers "SangokuMusou5PC"; matching it keeps the borderless
+  // resize off any splash/launcher window the game creates first.
+  if(!_stricmp(gameExeName,"SM5_WIN.exe")&&!strcmp(cls,"SangokuMusou5PC"))return true;
   if(!_stricmp(gameExeName,"ShinSangokumusou3.exe")&&!strcmp(cls,"KOEI-Dynasty Warriors 4 Window Class"))return true;
   if((!_stricmp(gameExeName,"SM4_WIN.exe")||!_stricmp(gameExeName,"SS4.exe")||!_stricmp(gameExeName,"SS4_Plus.exe")||!_stricmp(gameExeName,"SS4_Super.exe")||!_stricmp(gameExeName,"SS4_Ultima.exe"))&&!strcmp(cls,"SM4PC"))return true;
   if(!_stricmp(gameExeName,"SW2.exe")&&!strcmp(cls,"SW2WIN"))return true;
@@ -1329,6 +1335,7 @@ static bool chooseMainWindowW(LPCWSTR cls,LPCWSTR title,HWND parent) {
 }
 static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int height) {
  gameWindow=h;gameWindowProc=(WNDPROC)(unicode?SetWindowLongPtrW(h,GWLP_WNDPROC,(LONG_PTR)platformWindowProcW):SetWindowLongPtrA(h,GWLP_WNDPROC,(LONG_PTR)platformWindowProcA));
+ char className[128]={};GetClassNameA(h,className,(int)sizeof(className));
  logApartment("after window");
  if(associateIme)associateIme(h,nullptr,0);
  if(windowMode){
@@ -1338,7 +1345,7 @@ static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int he
   SetWindowPos(h,HWND_NOTOPMOST,x,y,width,height,SWP_FRAMECHANGED|SWP_NOACTIVATE);
  }
  else SetWindowPos(h,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
- logf("main window hooked hwnd=%p unicode=%d bounds=%d,%d %dx%d",h,unicode,x,y,width,height);
+ logf("main window hooked hwnd=%p class=%s unicode=%d bounds=%d,%d %dx%d",h,className,unicode,x,y,width,height);
 }
 static BOOL CALLBACK findExistingSW2Window(HWND h,LPARAM) {
  if(gameWindow)return FALSE;
@@ -1351,6 +1358,95 @@ static BOOL CALLBACK findExistingSW2Window(HWND h,LPARAM) {
 static void attachExistingMainWindow() {
  if(gameWindow||_stricmp(gameExeName,"SW2.exe"))return;
  EnumWindows(findExistingSW2Window,0);
+}
+// Some builds resolve user32 at runtime instead of importing it, so the
+// CreateWindowExA IAT hook never installs and the main window is never seen.
+// DW6 PC is one of them (its import table lists a single user32 function).
+// Fall back to polling the process's own top-level windows for the class the
+// game registers; once found, the normal subclassing and borderless resize run.
+static const char* expectedMainWindowClass() {
+ if(!_stricmp(gameExeName,"SM5_WIN.exe"))return "SangokuMusou5PC";
+ if(!_stricmp(gameExeName,"OROCHI_Z_TC.exe"))return "Orochi_Z_PC";
+ if(!_stricmp(gameExeName,"SW2.exe"))return "SW2WIN";
+ if(!_stricmp(gameExeName,"ShinSangokumusou3.exe"))return "KOEI-Dynasty Warriors 4 Window Class";
+ if(!_stricmp(gameExeName,"SM4_WIN.exe")||!_stricmp(gameExeName,"SS4.exe")||!_stricmp(gameExeName,"SS4_Plus.exe")||
+    !_stricmp(gameExeName,"SS4_Super.exe")||!_stricmp(gameExeName,"SS4_Ultima.exe"))return "SM4PC";
+ return nullptr;
+}
+static BOOL CALLBACK findMainWindowByClass(HWND h,LPARAM param) {
+ DWORD pid=0;GetWindowThreadProcessId(h,&pid);if(pid!=GetCurrentProcessId())return TRUE;
+ if(!IsWindowVisible(h))return TRUE;
+ char cls[128]={};if(!GetClassNameA(h,cls,(int)sizeof(cls)))return TRUE;
+ const char* wanted=expectedMainWindowClass();
+ if(!wanted||_stricmp(cls,wanted))return TRUE;
+ RECT r={};if(!GetWindowRect(h,&r))return TRUE;
+ // Skip splash/empty windows: the real game window always has a usable size.
+ if(r.right-r.left<160||r.bottom-r.top<120)return TRUE;
+ configureMainWindow(h,IsWindowUnicode(h),r.left,r.top,r.right-r.left,r.bottom-r.top);
+ *(HWND*)param=h;
+ return FALSE;
+}
+// Diagnostic: report every distinct top-level class this process shows, once, so
+// a wrong expectedMainWindowClass() guess is visible in the log instead of
+// looking like "the window never appeared".
+static char watcherSeenClass[8][64]={};
+static int watcherSeenCount=0;
+static BOOL CALLBACK logProcessWindowClasses(HWND h,LPARAM) {
+ DWORD pid=0;GetWindowThreadProcessId(h,&pid);if(pid!=GetCurrentProcessId())return TRUE;
+ if(!IsWindowVisible(h))return TRUE;
+ char cls[128]={};if(!GetClassNameA(h,cls,(int)sizeof(cls)))return TRUE;
+ for(int i=0;i<watcherSeenCount;i++)if(!_stricmp(watcherSeenClass[i],cls))return TRUE;
+ RECT r={};GetWindowRect(h,&r);
+ if(watcherSeenCount<8){strcpy_s(watcherSeenClass[watcherSeenCount++],cls);
+  logf("main window candidate class=%s size=%dx%d",cls,r.right-r.left,r.bottom-r.top);}
+ return TRUE;
+}
+// Fallback: the single large visible window the process owns. Used only when the
+// expected class never shows up, so an unpredictable class name still gets the
+// borderless treatment instead of silently doing nothing.
+struct WindowPick { HWND hwnd; int count; };
+static BOOL CALLBACK pickLargeProcessWindow(HWND h,LPARAM param) {
+ WindowPick* p=(WindowPick*)param;
+ DWORD pid=0;GetWindowThreadProcessId(h,&pid);if(pid!=GetCurrentProcessId())return TRUE;
+ if(!IsWindowVisible(h))return TRUE;
+ char cls[128]={};if(!GetClassNameA(h,cls,(int)sizeof(cls)))return TRUE;
+ if(!_stricmp(cls,"IME")||!_stricmp(cls,"MSCTFIME UI")||!_stricmp(cls,"Default IME"))return TRUE;
+ RECT r={};if(!GetWindowRect(h,&r))return TRUE;
+ if(r.right-r.left<640||r.bottom-r.top<360)return TRUE;
+ p->count++;
+ if(!p->hwnd)p->hwnd=h;
+ return TRUE;
+}
+static DWORD WINAPI mainWindowWatch(void*) {
+ SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
+ for(int attempt=0;attempt<600&&!gameWindow;attempt++){
+  HWND found=nullptr;EnumWindows(findMainWindowByClass,(LPARAM)&found);
+  if(found)break;
+  EnumWindows(logProcessWindowClasses,0);
+  if(attempt>=50){
+   WindowPick pick={};EnumWindows(pickLargeProcessWindow,(LPARAM)&pick);
+   if(pick.count==1&&pick.hwnd){
+    RECT r={};GetWindowRect(pick.hwnd,&r);
+    char cls[128]={};GetClassNameA(pick.hwnd,cls,(int)sizeof(cls));
+    logf("main window class mismatch: expected=%s actual=%s; attaching anyway",expectedMainWindowClass(),cls);
+    configureMainWindow(pick.hwnd,IsWindowUnicode(pick.hwnd),r.left,r.top,r.right-r.left,r.bottom-r.top);
+    break;
+   }
+  }
+  Sleep(100);
+ }
+ if(gameWindow)logf("main window attached by class watcher class=%s",expectedMainWindowClass());
+ else logf("main window watcher gave up: no %s window appeared",expectedMainWindowClass());
+ return 0;
+}
+static void startMainWindowWatch() {
+ // Only needed when the CreateWindowExA/CreateWindowExW IAT slots could not be
+ // patched (the game resolves user32 dynamically) and the exe has a known class.
+ if(!windowMode||gameWindow||(earlyHookMask&3)||!expectedMainWindowClass())return;
+ HANDLE thread=CreateThread(nullptr,0,mainWindowWatch,nullptr,0,nullptr);
+ if(!thread){logf("main window watcher failed to start error=%lu",GetLastError());return;}
+ CloseHandle(thread);
+ logf("main window watcher started for class=%s",expectedMainWindowClass());
 }
 static HWND WINAPI platformCreateWindow(DWORD ex,LPCSTR cls,LPCSTR title,DWORD style,int x,int y,int width,int height,HWND parent,HMENU menu,HINSTANCE inst,LPVOID param) {
  initializeAll();patchSsm7Resolution();bool target=chooseMainWindowA(cls,title,parent);

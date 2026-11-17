@@ -23,6 +23,8 @@ GAMES = [
      'build/dinput8.dll', 'SSM3_Tweaks.ini', []),
     ('SSM4SPTweaks', '真三国无双4 Special', 'Dynasty Warriors 5 Special',
      'build/dinput8.dll', 'SSM4_Tweaks.ini', []),
+    ('SSM5Tweaks', '真三国无双5', 'Dynasty Warriors 6',
+     'build/dinput8.dll', 'SSM5_Tweaks.ini', []),
     ('SSM6DXTweaks', '真三国无双6 with 猛将传 DX', 'Dynasty Warriors 7 DX',
      'build/dinput8.dll', 'SSM6_Tweaks.ini',
      [('d3dx9_43.dll', 'supplemental/ssm6tc/d3dx9_43.dll'),
@@ -121,6 +123,7 @@ One sub-zip per game — extract only the one you need:
 | `MOZTweaks` | 无双蛇魔Z / Musou Orochi Z | `dinput8.dll` + `OrochiZPadX.ini` |
 | `SSM3Tweaks` | 真三国无双3 / Dynasty Warriors 4: Hyper | `dinput8.dll` + `SSM3_Tweaks.ini` |
 | `SSM4SPTweaks` | 真三国无双4 Special / Dynasty Warriors 5 Special | `dinput8.dll` + `SSM4_Tweaks.ini` |
+| `SSM5Tweaks` | 真三国无双5 / Dynasty Warriors 6 | `dinput8.dll` + `SSM5_Tweaks.ini` |
 | `SSM6DXTweaks` | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | `dinput8.dll` + `SSM6_Tweaks.ini` + `mods/` |
 | `SSM7wMTweaks` | 真三国无双7 with 猛将传 / Dynasty Warriors 8 | `dinput8.dll`（platform-only）+ `SSM7_Tweaks.ini` |
 | `SM2Tweaks` | 战国无双2 / Sengoku Musou 2 | `dinput8.dll` + `SM2_Tweaks.ini` |

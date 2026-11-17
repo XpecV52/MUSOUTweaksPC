@@ -20,6 +20,14 @@ static int enabled=1, foregroundOnly=1, menuNavigation=1, dpadPov=0, slotConfig=
 // 0=off, 1=mirror the D-pad onto the left stick continuously, 2=mirror it only
 // for a short pulse on each direction change (menu-friendly, no walking).
 static int dpadAsLeftStick=0, dpadPulseMs=50;
+// Menus that latch on a state change (rather than reading a held direction)
+// need repeated edges: blink the D-pad while it stays held, so the game sees a
+// fresh press every period. 0 disables the repeat (the default, so titles that
+// already repeat on a held direction keep their original feel).
+static int dpadRepeatMs=0, dpadRepeatDelayMs=400;
+static WORD dpadRepeatRaw=0;
+static bool dpadBlinkOff=false, dpadRepeatLogged=false;
+static ULONGLONG dpadHoldSince=0, dpadRepeatAt=0, dpadBlinkUntil=0;
 // 1 = the D-pad also synthesizes the keyboard arrow keys, which is the only
 // menu path some ports accept (SSM6 DX has no patchable menu map).
 static int dpadArrowKeys=0;
@@ -31,6 +39,14 @@ static const BYTE arrowDik[4]={DIK_UP,DIK_DOWN,DIK_LEFT,DIK_RIGHT};
 static WORD dpadBridgeLast=0;
 static ULONGLONG dpadBridgeUntil=0;
 static int leftDeadzone=20, rightThreshold=55, triggerThreshold=40, neutralMs=250;
+// How many axes the virtual pad advertises and fills: 2 keeps the original
+// left-stick-only device (SSM3/SSM4/SSM6/SSM7/OROCHI Z behaviour), 6 adds the
+// triggers and the right stick so titles that steer the camera with axes get it.
+static int padAxes=2;
+// Some ports only accept controllers they recognise by name. DW6 PC keeps a
+// whitelist of product names and ignores anything else, so the virtual device
+// has to introduce itself as one of them.
+static char padName[128]="MUSOUTweaksPC Gamepad";
 static bool logging=false;
 static std::recursive_mutex mutex;
 static DWORD (WINAPI *getXState)(DWORD,XINPUT_STATE*);
@@ -192,6 +208,7 @@ static const char* configFileNameForExecutable(const char* executable) {
  if(!_stricmp(executable,"ShinSangokumusou3.exe"))return "SSM3_Tweaks.ini";
  if(!_stricmp(executable,"SM4_WIN.exe")||!_stricmp(executable,"SS4.exe")||!_stricmp(executable,"SS4_Plus.exe")||!_stricmp(executable,"SS4_Super.exe")||!_stricmp(executable,"SS4_Ultima.exe"))return "SSM4_Tweaks.ini";
  if(!_stricmp(executable,"SM6TC.exe")||!_stricmp(executable,"SM6EN.exe")||!_stricmp(executable,"SM6JP.exe"))return "SSM6_Tweaks.ini";
+ if(!_stricmp(executable,"SM5_WIN.exe"))return "SSM5_Tweaks.ini";
  if(!_stricmp(executable,"Launch.exe"))return "SSM7_Tweaks.ini";
  if(!_stricmp(executable,"SW2.exe"))return "SM2_Tweaks.ini";
  return "OrochiZPadX.ini";
@@ -201,16 +218,20 @@ static void init() {
  char* slash=strrchr(iniPath,'\\'); if(slash)slash[1]=0;
  char executablePath[MAX_PATH]={};GetModuleFileNameA(nullptr,executablePath,MAX_PATH);const char* executable=strrchr(executablePath,'\\');executable=executable?executable+1:executablePath;
  strcpy_s(gameExeName,executable);
+ // DW6 PC keeps a whitelist of DirectInput product names and ignores every
+ // other controller, so its defaults differ from the rest of the family.
+ const bool dw6=!_stricmp(executable,"SM5_WIN.exe");(void)dw6;
  strcpy_s(logPath,iniPath);strcat_s(logPath,"MUSOUTweaksPC.log");strcat_s(iniPath,configFileNameForExecutable(executable));
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.45 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.46 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
  enabled=opt("enable",1);logging=opt("log",0)!=0;foregroundOnly=opt("foreground_only",1);
- menuNavigation=opt("dpad_menu_navigation",1);dpadPov=opt("dpad_pov",0);slotConfig=std::clamp(opt("xinput_slot",-1),-1,3);
+ menuNavigation=opt("dpad_menu_navigation",1);slotConfig=std::clamp(opt("xinput_slot",-1),-1,3);
+ int dpadPovSetting=opt("dpad_pov",-1);dpadPov=dpadPovSetting<0?(dw6?1:0):std::clamp(dpadPovSetting,0,1);
  leftDeadzone=std::clamp(opt("left_deadzone",20),0,90);
  rightThreshold=std::clamp(opt("right_threshold",55),10,95);
  triggerThreshold=std::clamp(opt("trigger_threshold",40),1,254);
@@ -218,12 +239,18 @@ static void init() {
  backend=std::clamp(opt("backend",0),0,2);
  int dpadAsLeftStickSetting=std::clamp(opt("dpad_as_left_stick",0),-1,2);
  dpadPulseMs=std::clamp(opt("dpad_menu_pulse_ms",50),0,1000);
+ dpadRepeatMs=std::clamp(opt("dpad_menu_repeat_ms",0),0,1000);
+ dpadRepeatDelayMs=std::clamp(opt("dpad_menu_repeat_delay_ms",400),0,3000);
  int dpadArrowKeysSetting=std::clamp(opt("dpad_arrow_keys",-1),-1,1);
  ds4RightX=std::clamp(opt("ds4_right_x",2),0,5);ds4RightY=std::clamp(opt("ds4_right_y",5),0,5);
+ int padAxesSetting=std::clamp(opt("pad_axes",0),0,6);
+ padAxes=padAxesSetting==0?(dw6?6:2):std::clamp(padAxesSetting,2,6);
+ GetPrivateProfileStringA("padfix","pad_name","",padName,sizeof(padName),iniPath);
+ if(!padName[0])strcpy_s(padName,dw6?"Controller (XBOX 360 For Windows)":"MUSOUTweaksPC Gamepad");
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.45 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,iniPath);
+ logf("MUSOUTweaksPC 2.46 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -257,13 +284,16 @@ static void init() {
  if(!nativeMenuMap&&!nativeMenuMapCandidateCount)logf("native menu map unavailable for this EXE; D-pad buttons and POV remain available");
  platformConfigure();
  // Auto mode: SSM3 PC wants a continuous mirror because its menu table cannot
- // be reached. SSM6 DX uses dpad_arrow_keys instead, so its D-pad never reaches
- // the left stick and cannot walk the character.
- bool dpadBridgeDefault=!_stricmp(gameExeName,"ShinSangokumusou3.exe");
- dpadAsLeftStick=dpadAsLeftStickSetting<0?(dpadBridgeDefault?1:0):dpadAsLeftStickSetting;
- // SSM6 DX menus read the keyboard arrows, so the D-pad drives them through the
- // virtual keyboard instead of the left stick: menus work, the character stays put.
- bool arrowDefault=!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe");
+ // be reached. SSM6 DX and DW6 PC use dpad_arrow_keys instead, so their D-pad
+ // never reaches the left stick and cannot walk the character. The D-pad stays a
+ // normal DirectInput POV/button set that the game can bind on its own.
+ int dpadBridgeDefault=!_stricmp(gameExeName,"ShinSangokumusou3.exe")?1:0;
+ dpadAsLeftStick=dpadAsLeftStickSetting<0?dpadBridgeDefault:dpadAsLeftStickSetting;
+ // SSM6 DX and DW6 PC menus read the keyboard arrows, so the D-pad drives them
+ // through the game's own keyboard device instead of the left stick: menus work,
+ // the character stays put and the D-pad keeps its own bindings.
+ bool arrowDefault=!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe")
+  ||!_stricmp(gameExeName,"SM5_WIN.exe");
  dpadArrowKeys=dpadArrowKeysSetting<0?(arrowDefault?1:0):dpadArrowKeysSetting;
  logf("D-pad arrow-key synthesis=%d",dpadArrowKeys);
  logf("D-pad to left-stick bridge=%d",dpadAsLeftStick);
@@ -290,7 +320,11 @@ static void installMenuDpad() {
  bool changed=false;
  if(patchMenuMap(*nativeMenuMap,changed)&&changed)logf("native menu D-pad installed: actions=0..3 buttons=13..16; player maps untouched");
 }
-struct PadState { LONG x=0,y=0; BYTE buttons[20]={}; WORD dpad=0; };
+struct PadState {
+ LONG x=0,y=0,rx=0,ry=0,z=-255,rz=-255;
+ BYTE buttons[20]={};
+ WORD dpad=0;
+};
 static int selectedSlot=-1;
 static bool armed=false, wasConnected=false, wasForeground=false, neutralPending=false;
 static int loggedForeground=-1;
@@ -300,6 +334,38 @@ static WORD loggedDpad=0xffff;
 static bool foreground() {
  if(!foregroundOnly)return true;DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);
  return pid==GetCurrentProcessId();
+}
+// Hold-to-repeat. A menu that latches one cursor step per state change will not
+// move any further while the direction stays held, so the forwarded D-pad has to
+// be released and pressed again. After dpad_menu_repeat_delay_ms the direction is
+// blinked off for dpad_menu_pulse_ms every dpad_menu_repeat_ms, which gives the
+// POV hat, the four D-pad buttons, the arrow-key injection and (only when it is
+// enabled) the left-stick bridge fresh edges each period.
+// dpad_menu_repeat_ms=0 disables the repeat entirely.
+static WORD dpadHoldRepeat(WORD raw) {
+ if(dpadRepeatMs<=0)return raw;
+ ULONGLONG now=GetTickCount64();
+ if(raw!=dpadRepeatRaw){
+  dpadRepeatRaw=raw;dpadHoldSince=now;dpadBlinkOff=false;dpadBlinkUntil=0;
+  dpadRepeatAt=now+(ULONGLONG)dpadRepeatDelayMs;dpadRepeatLogged=false;
+  return raw;
+ }
+ if(!raw)return 0;
+ if(dpadBlinkOff){
+  if(now<dpadBlinkUntil)return 0;
+  // Release finished: hold the direction again for whatever is left of the
+  // period, so the cadence stays one step per dpad_menu_repeat_ms.
+  int hold=dpadRepeatMs-(dpadPulseMs>0?dpadPulseMs:1);if(hold<1)hold=1;
+  dpadBlinkOff=false;dpadRepeatAt=now+(ULONGLONG)hold;
+  return raw;
+ }
+ if(now>=dpadRepeatAt){
+  dpadBlinkOff=true;
+  dpadBlinkUntil=now+(ULONGLONG)(dpadPulseMs>0?dpadPulseMs:1);
+  if(!dpadRepeatLogged){dpadRepeatLogged=true;logf("D-pad repeat active bits=%x period=%dms release=%dms",raw,dpadRepeatMs,dpadPulseMs);}
+  return 0;
+ }
+ return raw;
 }
 static PadState sample() {
  std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -338,23 +404,35 @@ static PadState sample() {
  }
  auto axis=[dz](int v)->LONG {if(abs(v)<=dz)return 0;return std::clamp(v,-32767,32767)*255/32767;};
  out.x=axis(g.sThumbLX);out.y=-axis(g.sThumbLY);
+ // Right stick keeps the deadzone so a resting stick never pans the camera.
+ out.rx=axis(g.sThumbRX);out.ry=-axis(g.sThumbRY);
+ // Triggers become full-range axes: fully released maps to the axis minimum so
+ // a title that treats the axis as "how far pressed" reads 0 at rest.
+ out.z=(LONG)g.bLeftTrigger*510/255-255;out.rz=(LONG)g.bRightTrigger*510/255-255;
  for(int i=0;i<10;i++)out.buttons[i]=(g.wButtons&buttonMasks[i])?0x80:0;
  out.buttons[10]=g.bLeftTrigger>=triggerThreshold?0x80:0;
  out.buttons[11]=g.bRightTrigger>=triggerThreshold?0x80:0;
- out.dpad=g.wButtons&15;
+ WORD rawDpad=g.wButtons&15;
+ out.dpad=rawDpad;
  static WORD loggedForwardedDpad=0xffff;
  if(out.dpad!=loggedForwardedDpad){loggedForwardedDpad=out.dpad;logf("virtual DirectInput forwarded D-pad bits=%x left=%ld,%ld",out.dpad,out.x,out.y);}
+ // Held directions become repeated presses here, after the raw state has been
+ // logged, so the POV hat, the buttons, the arrow keys and the left-stick
+ // bridge all see the same blinking D-pad.
+ out.dpad=dpadHoldRepeat(rawDpad);
  out.buttons[12]=(out.dpad&XINPUT_GAMEPAD_DPAD_UP)?0x80:0;
  out.buttons[13]=(out.dpad&XINPUT_GAMEPAD_DPAD_DOWN)?0x80:0;
  out.buttons[14]=(out.dpad&XINPUT_GAMEPAD_DPAD_LEFT)?0x80:0;
  out.buttons[15]=(out.dpad&XINPUT_GAMEPAD_DPAD_RIGHT)?0x80:0;
  out.buttons[16]=g.sThumbRY>rt?0x80:0;out.buttons[17]=g.sThumbRY<-rt?0x80:0;
  out.buttons[18]=g.sThumbRX<-rt?0x80:0;out.buttons[19]=g.sThumbRX>rt?0x80:0;
- // The SM3 PC build and SSM6 DX do not consume the POV/button D-pad through
- // their native menu maps, so the D-pad is mirrored onto the left stick.
+ // The SM3 PC build, SSM6 DX and DW6 PC do not consume the POV/button D-pad
+ // through their native menu maps, so the D-pad is mirrored onto the left stick.
  // Mode 1 mirrors continuously (menus repeat, but the character also walks).
  // Mode 2 mirrors only for a short pulse per direction change: long enough for
  // a menu to latch one cursor step, short enough that gameplay barely moves.
+ // Both modes follow the repeated (blinked) state, because that edge is what
+ // makes a held direction keep stepping through a menu.
  if(dpadAsLeftStick){
   bool apply=dpadAsLeftStick==1;
   if(!apply){
@@ -379,19 +457,27 @@ static PadState sample() {
 static DIDEVICEINSTANCEA instance() {
  DIDEVICEINSTANCEA i={};i.dwSize=sizeof(i);i.guidInstance=i.guidProduct=padGuid;
  i.dwDevType=DI8DEVTYPE_GAMEPAD|(DI8DEVTYPEGAMEPAD_STANDARD<<8);
- strcpy_s(i.tszInstanceName,"MUSOUTweaksPC Gamepad");strcpy_s(i.tszProductName,"MUSOUTweaksPC Gamepad");return i;
+ strcpy_s(i.tszInstanceName,padName);strcpy_s(i.tszProductName,padName);return i;
+}
+// Axis slots follow the c_dfDIJoystick2 order: X, Y, Z, Rx, Ry, Rz.
+static const GUID* const axisGuid[6]={&GUID_XAxis,&GUID_YAxis,&GUID_ZAxis,&GUID_RxAxis,&GUID_RyAxis,&GUID_RzAxis};
+static const char* const axisLabel[6]={"Left stick X","Left stick Y","Left trigger","Right stick X","Right stick Y","Right trigger"};
+static int axisSlot(const GUID& g) {
+ for(int i=0;i<6;i++)if(g==*axisGuid[i])return i;
+ return -1;
 }
 struct Field { DWORD offset,type;int index; };
 class Device final:public IDirectInputDevice8A {
  LONG refs=1; IDirectInputDevice8A* real=nullptr; bool keyboard=false,acquired=false;
  bool keyboardPollLogged=false,keyboardBufferedLogged=false,keyboardAcquireLogged=false;
  std::vector<Field> fields; DWORD dataSize=0,bufferSize=0,sequence=0;
- LONG minimum[2]={0,0},maximum[2]={65535,65535};
+ LONG minimum[6]={0,0,0,0,0,0},maximum[6]={65535,65535,65535,65535,65535,65535};
  std::vector<BYTE> previous; std::deque<DIDEVICEOBJECTDATA> events;
  DWORD resolveAxis(const DIPROPHEADER* h) {
-  if(h->dwHow==DIPH_DEVICE)return 2;
-  if(h->dwHow==DIPH_BYID)return DIDFT_GETINSTANCE(h->dwObj);
-  if(h->dwHow==DIPH_BYOFFSET)for(auto& f:fields)if(f.offset==h->dwObj&&(f.type&DIDFT_AXIS))return f.index;
+  // 6 = device-wide, 99 = not an axis this device reports.
+  if(h->dwHow==DIPH_DEVICE)return 6;
+  if(h->dwHow==DIPH_BYID){DWORD i=DIDFT_GETINSTANCE(h->dwObj);return i<6?i:99;}
+  if(h->dwHow==DIPH_BYOFFSET)for(auto& f:fields)if(f.offset==h->dwObj&&(f.type&DIDFT_AXIS))return f.index<6?(DWORD)f.index:99;
   return 99;
  }
  void pushEvent(DWORD ofs,DWORD val) {
@@ -416,7 +502,12 @@ class Device final:public IDirectInputDevice8A {
    }
    else if(f.type&DIDFT_AXIS) {
     int i=f.index;LONG v=0;
-    if(i<2){LONG a=i?s.y:s.x;v=(LONG)((long long)minimum[i]+((long long)a+255)*((long long)maximum[i]-minimum[i])/510);}
+    if(i<padAxes){
+     LONG a=0;
+     switch(i){case 0:a=s.x;break;case 1:a=s.y;break;case 2:a=s.z;break;
+      case 3:a=s.rx;break;case 4:a=s.ry;break;default:a=s.rz;}
+     v=(LONG)((long long)minimum[i]+((long long)a+255)*((long long)maximum[i]-minimum[i])/510);
+    }
     memcpy(dst,&v,4);
    }
   }
@@ -424,9 +515,9 @@ class Device final:public IDirectInputDevice8A {
  }
  DIDEVICEOBJECTINSTANCEA object(int k) {
   DIDEVICEOBJECTINSTANCEA o={};o.dwSize=sizeof(o);
-  if(k<2){o.guidType=k?GUID_YAxis:GUID_XAxis;o.dwOfs=k*4;o.dwType=DIDFT_ABSAXIS|DIDFT_MAKEINSTANCE(k);sprintf_s(o.tszName,"Left stick %c",k?'Y':'X');}
-  else if(k==2&&dpadPov){o.guidType=GUID_POV;o.dwOfs=DIJOFS_POV(0);o.dwType=DIDFT_POV|DIDFT_MAKEINSTANCE(0);strcpy_s(o.tszName,"D-pad POV");}
-  else{int b=k-(dpadPov?3:2);o.guidType=GUID_Button;o.dwOfs=DIJOFS_BUTTON(b);o.dwType=DIDFT_PSHBUTTON|DIDFT_MAKEINSTANCE(b);sprintf_s(o.tszName,"Button %d",b+1);}
+  if(k<padAxes){o.guidType=*axisGuid[k];o.dwOfs=k*4;o.dwType=DIDFT_ABSAXIS|DIDFT_MAKEINSTANCE(k);strcpy_s(o.tszName,axisLabel[k]);}
+  else if(k==padAxes&&dpadPov){o.guidType=GUID_POV;o.dwOfs=DIJOFS_POV(0);o.dwType=DIDFT_POV|DIDFT_MAKEINSTANCE(0);strcpy_s(o.tszName,"D-pad POV");}
+  else{int b=k-(padAxes+(dpadPov?1:0));o.guidType=GUID_Button;o.dwOfs=DIJOFS_BUTTON(b);o.dwType=DIDFT_PSHBUTTON|DIDFT_MAKEINSTANCE(b);sprintf_s(o.tszName,"Button %d",b+1);}
   return o;
  }
 public:
@@ -437,22 +528,22 @@ public:
  HRESULT STDMETHODCALLTYPE GetCapabilities(LPDIDEVCAPS c) override {
   if(real)return real->GetCapabilities(c);if(!c||c->dwSize!=sizeof(*c))return DIERR_INVALIDPARAM;
   DWORD size=c->dwSize;memset(c,0,sizeof(*c));c->dwSize=size;c->dwFlags=DIDC_ATTACHED|DIDC_EMULATED;
-  c->dwDevType=instance().dwDevType;c->dwAxes=2;c->dwButtons=20;c->dwPOVs=dpadPov?1:0;return DI_OK;
+  c->dwDevType=instance().dwDevType;c->dwAxes=padAxes;c->dwButtons=20;c->dwPOVs=dpadPov?1:0;return DI_OK;
  }
  HRESULT STDMETHODCALLTYPE EnumObjects(LPDIENUMDEVICEOBJECTSCALLBACKA cb,LPVOID ctx,DWORD flags) override {
   if(real)return real->EnumObjects(cb,ctx,flags);if(!cb)return DIERR_INVALIDPARAM;
-  for(int i=0;i<(dpadPov?23:22);i++){auto o=object(i);if(flags==DIDFT_ALL||DIDFT_GETTYPE(flags&o.dwType))if(cb(&o,ctx)==DIENUM_STOP)break;}return DI_OK;
+  for(int i=0;i<padAxes+(dpadPov?1:0)+20;i++){auto o=object(i);if(flags==DIDFT_ALL||DIDFT_GETTYPE(flags&o.dwType))if(cb(&o,ctx)==DIENUM_STOP)break;}return DI_OK;
  }
  HRESULT STDMETHODCALLTYPE GetProperty(REFGUID prop,LPDIPROPHEADER h) override {
   if(real)return real->GetProperty(prop,h);if(!h)return DIERR_INVALIDPARAM;
-  if(&prop==&DIPROP_RANGE){if(h->dwSize!=sizeof(DIPROPRANGE))return DIERR_INVALIDPARAM;DWORD a=resolveAxis(h);if(a>2)return DIERR_OBJECTNOTFOUND;auto p=(DIPROPRANGE*)h;p->lMin=minimum[a==2?0:a];p->lMax=maximum[a==2?0:a];return DI_OK;}
+  if(&prop==&DIPROP_RANGE){if(h->dwSize!=sizeof(DIPROPRANGE))return DIERR_INVALIDPARAM;DWORD a=resolveAxis(h);if(a==99)return DIERR_OBJECTNOTFOUND;auto p=(DIPROPRANGE*)h;p->lMin=minimum[a==6?0:a];p->lMax=maximum[a==6?0:a];return DI_OK;}
   if(&prop==&DIPROP_BUFFERSIZE||&prop==&DIPROP_DEADZONE||&prop==&DIPROP_SATURATION||&prop==&DIPROP_AXISMODE){if(h->dwSize!=sizeof(DIPROPDWORD))return DIERR_INVALIDPARAM;((DIPROPDWORD*)h)->dwData=&prop==&DIPROP_BUFFERSIZE?bufferSize:(&prop==&DIPROP_AXISMODE?DIPROPAXISMODE_ABS:0);return DI_OK;}
   return DIERR_UNSUPPORTED;
  }
  HRESULT STDMETHODCALLTYPE SetProperty(REFGUID prop,LPCDIPROPHEADER h) override {
   if(real){HRESULT hr=real->SetProperty(prop,h);if(SUCCEEDED(hr)&&keyboard&&&prop==&DIPROP_BUFFERSIZE&&h&&h->dwSize==sizeof(DIPROPDWORD))bufferSize=((DIPROPDWORD*)h)->dwData;return hr;}
   if(!h)return DIERR_INVALIDPARAM;
-  if(&prop==&DIPROP_RANGE){if(h->dwSize!=sizeof(DIPROPRANGE))return DIERR_INVALIDPARAM;auto p=(const DIPROPRANGE*)h;if(p->lMin>=p->lMax)return DIERR_INVALIDPARAM;DWORD a=resolveAxis(h);if(a>2)return DIERR_OBJECTNOTFOUND;for(int k=0;k<2;k++)if(a==2||a==(DWORD)k){minimum[k]=p->lMin;maximum[k]=p->lMax;}return DI_OK;}
+  if(&prop==&DIPROP_RANGE){if(h->dwSize!=sizeof(DIPROPRANGE))return DIERR_INVALIDPARAM;auto p=(const DIPROPRANGE*)h;if(p->lMin>=p->lMax)return DIERR_INVALIDPARAM;DWORD a=resolveAxis(h);if(a==99)return DIERR_OBJECTNOTFOUND;for(int k=0;k<6;k++)if(a==6||a==(DWORD)k){minimum[k]=p->lMin;maximum[k]=p->lMax;}return DI_OK;}
   if(&prop==&DIPROP_BUFFERSIZE){if(h->dwSize!=sizeof(DIPROPDWORD))return DIERR_INVALIDPARAM;bufferSize=std::min(((const DIPROPDWORD*)h)->dwData,1024UL);events.clear();previous.clear();return DI_OK;}
   if(&prop==&DIPROP_AXISMODE){if(h->dwSize!=sizeof(DIPROPDWORD))return DIERR_INVALIDPARAM;return ((const DIPROPDWORD*)h)->dwData==DIPROPAXISMODE_ABS?DI_OK:DIERR_UNSUPPORTED;}
   if(&prop==&DIPROP_DEADZONE||&prop==&DIPROP_SATURATION)return DI_OK;
@@ -499,7 +590,7 @@ public:
    int index=DIDFT_GETINSTANCE(o.dwType);
    if(o.dwType&DIDFT_BUTTON){if((o.dwType&DIDFT_INSTANCEMASK)==DIDFT_ANYINSTANCE)index=buttonIndex;buttonIndex++;}
    if(o.dwType&DIDFT_POV){if((o.dwType&DIDFT_INSTANCEMASK)==DIDFT_ANYINSTANCE)index=povIndex;povIndex++;}
-   if(o.dwType&DIDFT_AXIS){index=99;if(o.pguid){if(*o.pguid==GUID_XAxis)index=0;else if(*o.pguid==GUID_YAxis)index=1;}else index=(o.dwType&DIDFT_INSTANCEMASK)==DIDFT_ANYINSTANCE?axisIndex:DIDFT_GETINSTANCE(o.dwType);axisIndex++;if(o.dwFlags&&(o.dwFlags&DIDOI_ASPECTMASK)!=DIDOI_ASPECTPOSITION)index=99;}
+   if(o.dwType&DIDFT_AXIS){index=99;if(o.pguid){int slot=axisSlot(*o.pguid);if(slot>=0)index=slot;}else index=(o.dwType&DIDFT_INSTANCEMASK)==DIDFT_ANYINSTANCE?axisIndex:DIDFT_GETINSTANCE(o.dwType);axisIndex++;if(o.dwFlags&&(o.dwFlags&DIDOI_ASPECTMASK)!=DIDOI_ASPECTPOSITION)index=99;}
    next.push_back({o.dwOfs,o.dwType,index});
   }
   fields=next;dataSize=f->dwDataSize;events.clear();previous.clear();logf("virtual SetDataFormat bytes=%lu objects=%lu",dataSize,f->dwNumObjs);return DI_OK;
@@ -512,7 +603,7 @@ public:
  }
  HRESULT STDMETHODCALLTYPE GetObjectInfo(LPDIDEVICEOBJECTINSTANCEA p,DWORD obj,DWORD how) override {
   if(real)return real->GetObjectInfo(p,obj,how);if(!p||p->dwSize!=sizeof(*p))return DIERR_INVALIDPARAM;
-  for(int k=0;k<(dpadPov?23:22);k++){auto o=object(k);if((how==DIPH_BYID&&o.dwType==obj)||(how==DIPH_BYOFFSET&&o.dwOfs==obj)){*p=o;return DI_OK;}}return DIERR_OBJECTNOTFOUND;
+  for(int k=0;k<padAxes+(dpadPov?1:0)+20;k++){auto o=object(k);if((how==DIPH_BYID&&o.dwType==obj)||(how==DIPH_BYOFFSET&&o.dwOfs==obj)){*p=o;return DI_OK;}}return DIERR_OBJECTNOTFOUND;
  }
  HRESULT STDMETHODCALLTYPE GetDeviceInfo(LPDIDEVICEINSTANCEA p) override {if(real)return real->GetDeviceInfo(p);if(!p||p->dwSize!=sizeof(*p))return DIERR_INVALIDPARAM;*p=instance();return DI_OK;}
  HRESULT STDMETHODCALLTYPE RunControlPanel(HWND w,DWORD f) override{return real?real->RunControlPanel(w,f):DIERR_UNSUPPORTED;}
@@ -556,7 +647,7 @@ public:
  HRESULT STDMETHODCALLTYPE GetDeviceStatus(REFGUID g) override{return g==padGuid?DI_OK:real->GetDeviceStatus(g);}
  HRESULT STDMETHODCALLTYPE RunControlPanel(HWND w,DWORD f) override{return real->RunControlPanel(w,f);}
  HRESULT STDMETHODCALLTYPE Initialize(HINSTANCE h,DWORD v) override{return real->Initialize(h,v);}
- HRESULT STDMETHODCALLTYPE FindDevice(REFGUID g,LPCSTR n,LPGUID out) override {if(n&&!strcmp(n,"MUSOUTweaksPC Gamepad")){if(!out)return E_POINTER;*out=padGuid;return DI_OK;}return real->FindDevice(g,n,out);}
+ HRESULT STDMETHODCALLTYPE FindDevice(REFGUID g,LPCSTR n,LPGUID out) override {if(n&&!strcmp(n,padName)){if(!out)return E_POINTER;*out=padGuid;return DI_OK;}return real->FindDevice(g,n,out);}
  HRESULT STDMETHODCALLTYPE EnumDevicesBySemantics(LPCSTR,LPDIACTIONFORMATA,LPDIENUMDEVICESBYSEMANTICSCBA,LPVOID,DWORD) override{return DIERR_UNSUPPORTED;}
  HRESULT STDMETHODCALLTYPE ConfigureDevices(LPDICONFIGUREDEVICESCALLBACK,LPDICONFIGUREDEVICESPARAMSA,DWORD,LPVOID) override{return DIERR_UNSUPPORTED;}
 };

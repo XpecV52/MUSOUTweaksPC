@@ -11,6 +11,7 @@
 | --- | --- | --- | --- |
 | 真三国无双3(SSM3_Shin Sangokumusou3) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | 手柄适配、十字键、无边框窗口、输入法隔离 |
 | 真三国无双4 Special(SSM4SP_Shin Sangokumusou4 Special) | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | 手柄适配、十字键菜单导航、无边框窗口 |
+| 真三国无双5(SSM5_Shin Sangokumusou5) | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | 手柄适配（按游戏名单报告设备名）、右摇杆转视角、十字键、无边框全屏 |
 | 真三国无双6with猛将传DX(SSM6DX_Shin Sangokumusou6 with Moushouden DX) | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | 手柄适配、十字键菜单导航、无边框全屏缩放、后台扫描器崩溃修复 |
 | 真三国无双7with猛将传(SSM7DX_Shin Sangokumusou7 with Moushouden) | `Launch.exe` | `SSM7_Tweaks.ini` | 无边框全屏、清晰缩放、内部渲染分辨率、3D 镜头远近 |
 | 战国无双2(SM2_SengokuMusou2) | `SW2.exe` | `SM2_Tweaks.ini` | 手柄适配、无边框窗口、引擎分辨率移植、HUD 校正、帧率限制 |
@@ -27,6 +28,10 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 ### 真三国无双4 Special(SSM4SP_Shin Sangokumusou4 Special)
 
 与真三3 同一套手柄与窗口处理，另外通过代码指纹校验定位了本作的原生菜单映射表，因此十字键可以在游戏菜单里移动光标。分辨率策略与真三3 相同：保持游戏自身渲染目标，拒绝高分辨率覆写。
+
+### 真三国无双5(SSM5_Shin Sangokumusou5)
+
+这一作的手柄列表是**按名字过滤**的：`SM5_WIN.exe` 里带一份 DirectInput 产品名白名单（Xbox 360 手柄、罗技 ChillStream、ELECOM/SANWA 等），名字不在名单里的设备能被枚举到但永远不会被选中，表现成手柄完全没反应。所以虚拟手柄默认报成 `Controller (XBOX 360 For Windows)`（`pad_name`）。本作用右摇杆转视角，虚拟设备默认暴露 **6 轴**（左摇杆 + 扳机 + 右摇杆，`pad_axes=6`），而不是其他作品的两轴。十字键同时给出 POV 方向帽和 50 毫秒点动镜像（`dpad_as_left_stick=2`）：菜单能走一格，角色几乎不动。窗口侧是无边框全屏 + 输入法隔离 + 跳过关闭确认框，画面按游戏自己选的分辨率渲染后由窗口拉伸铺满。
 
 ### 真三国无双6with猛将传DX(SSM6DX_Shin Sangokumusou6 with Moushouden DX)
 
@@ -65,6 +70,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 | --- | --- | --- |
 | 真三3 | `Shin Sangokumusou 3\game` | `dinput8.dll` |
 | 真三4 Special | `Shin Sangokumusou 4` | `dinput8.dll` |
+| 真三5 | `Shin Sangokumusou 5` | `dinput8.dll` |
 | 真三6 DX | `Dynasty Warriors 7 DX` | `dinput8.dll` |
 | 真三7 | `Dynasty Warriors 8` | `dinput8-platform.dll`（改名 `dinput8.dll`） |
 | 战国无双2 | 游戏根目录 | `dinput8.dll` |
@@ -100,6 +106,14 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.46
+- **新增真三国无双5（`SM5_WIN.exe`）支持**，配置文件 `SSM5_Tweaks.ini`。该作的手柄列表按**产品名白名单**过滤，名单外的设备能被枚举但不会被选中，所以虚拟手柄默认报成 `Controller (XBOX 360 For Windows)`（新配置项 `pad_name`）。
+- 虚拟 DirectInput 设备新增 `pad_axes`：`2` 维持原来的「只有左摇杆」，`6` 额外暴露 Z（左扳机）、Rx/Ry（右摇杆）、Rz（右扳机）。真三5 默认 `6`，因为该作用右摇杆转视角。其他作品默认仍是 `2`，行为不变。
+- 真三5 十字键默认 `dpad_pov=1` + `dpad_as_left_stick=0` + `dpad_arrow_keys=1`：十字键只作为 POV 方向帽和独立按钮交给游戏（可以单独绑键、不会带动角色），菜单光标走游戏自己的键盘设备（该作以缓冲模式读键盘，`GetDeviceData` 容量 10）。主窗口按注册类名 `SangokuMusou5PC` 识别。
+- 新增 `dpad_menu_repeat_ms` / `dpad_menu_repeat_delay_ms`：菜单「按一次走一格」的作品，按住方向超过延迟时间后会周期性松开一小段，游戏重新收到按下事件，光标持续移动。连发只作用于 POV 方向帽、十字键按钮和方向键注入，`dpad_as_left_stick=0` 时左摇杆完全不动。真三5 默认开启（120/400），其余作品默认 `0`（关闭），行为不变。
+- 无边框窗口新增**按类名轮询**兜底：有些作品（真三5 的 `SM5_WIN.exe` 只静态导入 `MessageBoxA`）根本不走 `CreateWindowExA` 的 IAT 槽，原来的窗口钩子永远打不上，无边框缩放静默失效。现在若窗口钩子缺失，补丁会轮询本进程的顶层窗口找注册类名，并在日志里列出所有候选类名；找不到预期类名时，只要进程只有一个大窗口也会接管。真三5 实测日志：`main window watcher started` → `main window hooked class=SangokuMusou5PC bounds=0,0 2560x1440`。
+- 新增 `install-ssm5.ps1`；`install-targets.ps1`、`restore.ps1` 增加真三5 条目。
+
 ### 2.45
 - **真三国无双6 with 猛将传 DX**：十字键改用「游戏自己的键盘设备」导航菜单，`dpad_as_left_stick` 恢复默认 0。诊断确认该作是以**缓冲模式**读 DirectInput 键盘（`GetDeviceData`，容量 64）而不是轮询 `GetDeviceState`，所以新配置项 `dpad_arrow_keys` 在游戏的键盘设备上成对追加 `DIK_UP/DOWN/LEFT/RIGHT` 的按下与松开事件。菜单光标可以移动，左摇杆完全不动，**角色不会再跟着走**。
 - **真三国无双6 with 猛将传 DX**：`native_resolution` / `scale_to_fill` 改为默认 0。原生渲染下游戏只往 2560×1440 后备缓冲的左上角 1920×1080 区域绘制，右边和下边是黑的；开启 `scale_to_fill` 又会让 3D 视口与按 1920×1080 排版的 2D 层错位，表现为「视野异常」。现在保留游戏自己的渲染分辨率，由无边框窗口把它拉伸铺满桌面，视野与 2D 排版和原始设计完全一致。
@@ -116,7 +130,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.45**，对外发布版本 **V1.0.1**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.46**，对外发布版本 **V1.0.1**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -133,7 +147,8 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 | --- | --- | --- | --- |
 | Dynasty Warriors 4: Hyper (SSM3) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | Gamepad adapter, D-pad, borderless window, IME isolation |
 | Dynasty Warriors 5 Special (SSM4SP) | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless window |
-| Dynasty Warriors 6 with Xtreme Legends DX (SSM6DX) | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless scaling, background-scanner crash fix |
+| Dynasty Warriors 6 (SSM5) | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | Gamepad adapter with a whitelisted device name, right-stick camera, D-pad, borderless fullscreen |
+| Dynasty Warriors 7 with Xtreme Legends DX (SSM6DX) | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless scaling, background-scanner crash fix |
 | Dynasty Warriors 8 with Xtreme Legends (SSM7DX) | `Launch.exe` | `SSM7_Tweaks.ini` | Borderless fullscreen, sharp scaling, internal render resolution, 3D camera distance |
 | Samurai Warriors 2 (SM2) | `SW2.exe` | `SM2_Tweaks.ini` | Gamepad adapter, borderless window, engine resolution port, HUD fix, frame limiter |
 | Musou Orochi Z (MOZ) | `OROCHI_Z_TC.exe` | `OrochiZPadX.ini` | Gamepad adapter, borderless window, 3840x2160 internal rendering, camera distance |
@@ -150,7 +165,11 @@ Turns XInput and native Sony DS4 pads into the virtual DirectInput device the ga
 
 Same gamepad and window handling as SSM3, plus a signature-verified native menu map, so the D-pad moves the cursor in game menus. Resolution policy is identical: original render target only, high-resolution overrides refused.
 
-### Dynasty Warriors 6 with Xtreme Legends DX (SSM6DX)
+### Dynasty Warriors 6 (SSM5)
+
+This port filters controllers **by product name**: `SM5_WIN.exe` carries a whitelist of DirectInput names (Xbox 360 pad, Logitech ChillStream, ELECOM/SANWA pads, ...) and silently ignores anything else, so a device with an unknown name is enumerated but never selected and the pad looks dead. The virtual device therefore reports itself as `Controller (XBOX 360 For Windows)` by default (`pad_name`). The game steers the camera with the right stick, so the device exposes **six axes** (`pad_axes=6`: left stick, triggers, right stick) instead of the two the rest of the family uses. The D-pad is both a POV hat and a 50 ms pulsed stick nudge (`dpad_as_left_stick=2`), so menus step one entry per press while the character barely moves. On the window side: borderless fullscreen, IME isolation, close-confirmation bypass; the game renders at its own resolution and the window stretches that image.
+
+### Dynasty Warriors 7 with Xtreme Legends DX (SSM6DX)
 
 Gamepad adapter, D-pad menu navigation, borderless fullscreen, single primary-chain Present (so Steam/RTSS counts one frame and overlays stay attached); the borderless window stretches the game's own frame to the desktop. Also fixes a crash in the game's background scanner thread. The Traditional Chinese build (`SM6TC.exe`) can additionally load the bundled third-party mod: a `d3dx9_43.dll` loader plus `Fix_for_SM6.dll` (facial expression fix), installed with a timestamped backup by `install-ssm6dx.ps1`; see `THIRD_PARTY_MODS.md`.
 
@@ -187,7 +206,8 @@ Only the viewpoint moves: FOV, character proportions and HUD scale are preserved
 | --- | --- | --- |
 | DW4 Hyper | `Shin Sangokumusou 3\game` | `dinput8.dll` |
 | DW5 Special | `Shin Sangokumusou 4` | `dinput8.dll` |
-| DW6 XL DX | `Dynasty Warriors 7 DX` | `dinput8.dll` |
+| DW6 | `Shin Sangokumusou 5` | `dinput8.dll` |
+| DW7 XL DX | `Dynasty Warriors 7 DX` | `dinput8.dll` |
 | DW8 XL | `Dynasty Warriors 8` | `dinput8-platform.dll` (rename to `dinput8.dll`) |
 | Samurai Warriors 2 | game root | `dinput8.dll` |
 | Musou Orochi Z | game root | `dinput8.dll` |
@@ -222,6 +242,14 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Changelog
 
+### 2.46
+- **New: Dynasty Warriors 6 (`SM5_WIN.exe`)** with its own `SSM5_Tweaks.ini`. This port filters controllers by **product name**, so a device whose name is not on the game's whitelist is enumerated but never selected. The virtual pad therefore reports itself as `Controller (XBOX 360 For Windows)` (new `pad_name` option).
+- The virtual DirectInput device gained `pad_axes`: `2` keeps the original left-stick-only layout, `6` also exposes Z (left trigger), Rx/Ry (right stick) and Rz (right trigger). DW6 defaults to `6` because it steers the camera with the right stick; every other title stays on `2` and behaves exactly as before.
+- DW6 defaults to `dpad_pov=1` with `dpad_as_left_stick=0` and `dpad_arrow_keys=1`: the D-pad stays a plain POV hat plus four independent buttons (bindable on its own, never walks the character), and menu navigation goes through the game's own buffered DirectInput keyboard device. The main window is matched by its registered class `SangokuMusou5PC`.
+- New `dpad_menu_repeat_ms` / `dpad_menu_repeat_delay_ms`: for menus that step one entry per press, a held direction is released for a short moment every period after the delay, so the game keeps receiving fresh presses and the cursor keeps moving. The repeat only reaches the POV hat, the D-pad buttons and the arrow-key injection — with `dpad_as_left_stick=0` the left stick never moves. DW6 enables it by default (120/400); every other title keeps `0` (off) and behaves as before.
+- New **class-name polling fallback** for the borderless window: some builds (`SM5_WIN.exe` statically imports only `MessageBoxA`) never touch the `CreateWindowExA` IAT slot, so the original window hook never installed and the borderless resize silently did nothing. When the window hooks are missing the patch now polls the process's own top-level windows for the registered class, logs every candidate class, and takes the single large window if the expected class never appears. Live DW6 log: `main window watcher started` → `main window hooked class=SangokuMusou5PC bounds=0,0 2560x1440`.
+- New `install-ssm5.ps1`; `install-targets.ps1` and `restore.ps1` learned about DW6.
+
 ### 2.45
 - **SSM6DX**: the D-pad now navigates menus through the game's own keyboard device, and `dpad_as_left_stick` is back to 0. Diagnostics showed this build reads DirectInput keyboards in **buffered** mode (`GetDeviceData`, capacity 64) rather than polling `GetDeviceState`, so the new `dpad_arrow_keys` option appends paired `DIK_UP/DOWN/LEFT/RIGHT` key-down and key-up events to that device. The menu cursor moves, the left stick stays untouched, and **the character no longer walks**.
 - **SSM6DX**: `native_resolution` / `scale_to_fill` now default to 0. With native rendering the game only draws into the top-left 1920x1080 area of a 2560x1440 backbuffer, leaving black bars on the right and bottom; enabling `scale_to_fill` instead mismatches the 3D viewport against a 2D layer laid out for 1920x1080, which shows up as the wrong field of view. The game now keeps its own render resolution and the borderless window stretches that image to the desktop, so the view and the 2D layout match the original design.
@@ -238,4 +266,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.45**; public release: **V1.0.1**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.46**; public release: **V1.0.1**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
