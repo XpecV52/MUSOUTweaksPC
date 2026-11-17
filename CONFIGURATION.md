@@ -2,15 +2,17 @@
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
 
-| 游戏 | 配置文件 |
-|---|---|
-| 无双蛇魔 Z (`OROCHI_Z_TC.exe`) | `OrochiZPadX.ini` |
-| 真三国无双3 / Dynasty Warriors 4: Hyper (`ShinSangokumusou3.exe`) | `SSM3_Tweaks.ini` |
-| 真三国无双4 Special / Dynasty Warriors 5 Special (`SM4_WIN.exe`、`SS4*.exe`) | `SSM4_Tweaks.ini` |
-| 真三国无双5 / Dynasty Warriors 6 (`SM5_WIN.exe`) | `SSM5_Tweaks.ini` |
-| 真三国无双6 猛将传 DX (`SM6TC.exe`、`SM6EN.exe`、`SM6JP.exe`) | `SSM6_Tweaks.ini` |
-| 战国无双2 (`SW2.exe`) | `SM2_Tweaks.ini` |
-| 真三国无双7 / Dynasty Warriors 8 (`Launch.exe`) | `SSM7_Tweaks.ini` |
+| 游戏 | 适配版本 | 配置文件 |
+|---|---|---|
+| 无双蛇魔 Z (`OROCHI_Z_TC.exe`) | `V1.0.0.0` | `OrochiZPadX.ini` |
+| 真三国无双3 / Dynasty Warriors 4: Hyper (`ShinSangokumusou3.exe`) | 游侠繁体汉化 `V0.1.1.0`（`2.0.0.0`） | `SSM3_Tweaks.ini` |
+| 真三国无双4 Special / Dynasty Warriors 5 Special (`SM4_WIN.exe`、`SS4*.exe`) | `V1.0.0.0` | `SSM4_Tweaks.ini` |
+| 真三国无双5 / Dynasty Warriors 6 (`SM5_WIN.exe`) | `V1.0.0.1` | `SSM5_Tweaks.ini` |
+| 真三国无双6 猛将传 DX (`SM6TC.exe`、`SM6EN.exe`、`SM6JP.exe`) | Steam `V1.0.0.0` | `SSM6_Tweaks.ini` |
+| 战国无双2 (`SW2.exe`) | `V1.0.0.0` | `SM2_Tweaks.ini` |
+| 真三国无双7 / Dynasty Warriors 8 (`Launch.exe`) | Steam `V1.0.4.0` | `SSM7_Tweaks.ini` |
+
+「适配版本」是实际验证过的游戏版本；补丁按可执行文件名和内存特征码识别，其他版本大概率也能用，失效时把 `log` 改成 `1` 看日志里哪一步没匹配上。
 
 ## 主产物与文件
 

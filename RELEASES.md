@@ -11,17 +11,48 @@
 | --- | --- | ---: | --- |
 | `v1.0.0` | `MUSOUTweaksPC_V1.0.0.zip` | 432822 | 见发布页 |
 | `v1.0.1` | `MUSOUTweaksPC_V1.0.1.zip` | 1091191 | `a03d7b92ecd4d5292b52c93d3ec03ae3b627f83caf22b6b8b15a0b882f078648` |
+| `v1.0.2` | `MUSOUTweaksPC_V1.0.2.zip` | 1245363 | `191254f769cac0ea19447271935d4e11d0e217679e6f7ffb8864d49c3963de97` |
 
-`v1.0.1` 对应内部构建 **2.45**（dll 日志横幅里仍打印 `MUSOUTweaksPC 2.45`，那是构建号，不是发布号）。
+`v1.0.1` 对应内部构建 **2.45**、`v1.0.2` 对应 **2.46**（dll 日志横幅里打印的是构建号 `MUSOUTweaksPC 2.46`，不是发布号）。
+
+## 支持的游戏版本
+
+补丁按可执行文件名和内存特征码识别，下表是**实际验证过**的游戏版本；其他版本大概率也能用，失效时把 ini 的 `log` 改成 `1` 看日志。
+
+| 游戏 | 适配版本 | 可执行文件 | 子包 |
+| --- | --- | --- | --- |
+| 真三国无双3 / Dynasty Warriors 4: Hyper | 游侠繁体汉化 `V0.1.1.0`（`2.0.0.0`） | `ShinSangokumusou3.exe` | `SSM3Tweaks` |
+| 真三国无双4 Special / DW5 Special | `V1.0.0.0` | `SM4_WIN.exe` / `SS4*.exe` | `SSM4SPTweaks` |
+| 真三国无双5 / Dynasty Warriors 6 | `V1.0.0.1` | `SM5_WIN.exe` | `SSM5Tweaks` |
+| 真三国无双6 with 猛将传 DX / DW7 DX | Steam `V1.0.0.0` | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6DXTweaks` |
+| 真三国无双7 with 猛将传 / DW8 | Steam `V1.0.4.0` | `Launch.exe` | `SSM7wMTweaks` |
+| 战国无双2 / Sengoku Musou 2 | `V1.0.0.0` | `SW2.exe` | `SM2Tweaks` |
+| 无双蛇魔Z / Musou Orochi Z | `V1.0.0.0` | `OROCHI_Z_TC.exe` | `MOZTweaks` |
 
 发布流程：
 
 ```powershell
-python release.py                  # 生成 _rel\MUSOUTweaksPC_V1.0.1.zip + 六个子包 + NOTES_V1.0.1.md
-python publish.py V1.0.1 --notes _rel\NOTES_V1.0.1.md
+python release.py                  # 生成 _rel\MUSOUTweaksPC_V1.0.2.zip + 七个子包 + NOTES_V1.0.2.md
+python publish.py V1.0.2 --notes _rel\NOTES_V1.0.2.md
 ```
 
 `publish.py` 走 `api.github.com`（本机 `gh` 不可用），token 取自 git 凭据助手；同名 asset 会先删再传，所以可以反复跑。
+
+### V1.0.2 内容
+
+新增真三国无双5；整包内按游戏名分类，每个游戏一个子包：
+
+| 子包 | 大小 (B) | 游戏 | 适配版本 | 安装文件 |
+| --- | ---: | --- | --- | --- |
+| `MOZTweaks_V1.0.2.zip` | 140167 | 无双蛇魔Z / Musou Orochi Z | `V1.0.0.0` | `dinput8.dll` + `OrochiZPadX.ini` |
+| `SSM3Tweaks_V1.0.2.zip` | 139069 | 真三国无双3 / Dynasty Warriors 4: Hyper | 游侠繁体汉化 `V0.1.1.0`（`2.0.0.0`） | `dinput8.dll` + `SSM3_Tweaks.ini` |
+| `SSM4SPTweaks_V1.0.2.zip` | 139069 | 真三国无双4 Special / Dynasty Warriors 5 Special | `V1.0.0.0` | `dinput8.dll` + `SSM4_Tweaks.ini` |
+| `SSM5Tweaks_V1.0.2.zip` | 141388 | 真三国无双5 / Dynasty Warriors 6 | `V1.0.0.1` | `dinput8.dll` + `SSM5_Tweaks.ini` |
+| `SSM6DXTweaks_V1.0.2.zip` | 428736 | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | Steam `V1.0.0.0` | `dinput8.dll` + `SSM6_Tweaks.ini`（另附 `d3dx9_43.dll` + `mods/Fix_for_SM6*`） |
+| `SSM7wMTweaks_V1.0.2.zip` | 115723 | 真三国无双7 with 猛将传 / Dynasty Warriors 8 | Steam `V1.0.4.0` | `dinput8.dll`（platform-only 版）+ `SSM7_Tweaks.ini` |
+| `SM2Tweaks_V1.0.2.zip` | 138730 | 战国无双2 / Sengoku Musou 2 | `V1.0.0.0` | `dinput8.dll` + `SM2_Tweaks.ini` |
+
+V1.0.2 主要变化：新增真三5（手柄白名单设备名、6 轴右摇杆、无边框按类名兜底）；十字键不再桥接左摇杆，菜单光标改走游戏自己的键盘设备；新增长按连发。详见 `_rel/NOTES_V1.0.2.md`。
 
 ### V1.0.1 内容
 

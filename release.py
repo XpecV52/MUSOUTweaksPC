@@ -9,31 +9,32 @@ import hashlib
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'V1.0.1'
+VERSION = 'V1.0.2'
 OUT = ROOT / '_rel'
 
 # Fixed timestamp so the archives are byte-reproducible across runs.
 STAMP = (2026, 11, 17, 0, 0, 0)
 
-# name, chinese title, english title, dll, ini, extra files (dst, src)
+# name, chinese title, english title, dll, ini, extra files (dst, src), tested game version
 GAMES = [
     ('MOZTweaks', '无双蛇魔Z', 'Musou Orochi Z',
-     'build/dinput8.dll', 'OrochiZPadX.ini', []),
+     'build/dinput8.dll', 'OrochiZPadX.ini', [], 'V1.0.0.0'),
     ('SSM3Tweaks', '真三国无双3', 'Dynasty Warriors 4: Hyper',
-     'build/dinput8.dll', 'SSM3_Tweaks.ini', []),
+     'build/dinput8.dll', 'SSM3_Tweaks.ini', [], '游侠繁体汉化 V0.1.1.0 (2.0.0.0)'),
     ('SSM4SPTweaks', '真三国无双4 Special', 'Dynasty Warriors 5 Special',
-     'build/dinput8.dll', 'SSM4_Tweaks.ini', []),
+     'build/dinput8.dll', 'SSM4_Tweaks.ini', [], 'V1.0.0.0'),
     ('SSM5Tweaks', '真三国无双5', 'Dynasty Warriors 6',
-     'build/dinput8.dll', 'SSM5_Tweaks.ini', []),
+     'build/dinput8.dll', 'SSM5_Tweaks.ini', [], 'V1.0.0.1'),
     ('SSM6DXTweaks', '真三国无双6 with 猛将传 DX', 'Dynasty Warriors 7 DX',
      'build/dinput8.dll', 'SSM6_Tweaks.ini',
      [('d3dx9_43.dll', 'supplemental/ssm6tc/d3dx9_43.dll'),
       ('mods/Fix_for_SM6.dll', 'supplemental/ssm6tc/mods/Fix_for_SM6.dll'),
-      ('mods/Fix_for_SM6/enable.txt', 'supplemental/ssm6tc/mods/Fix_for_SM6/enable.txt')]),
+      ('mods/Fix_for_SM6/enable.txt', 'supplemental/ssm6tc/mods/Fix_for_SM6/enable.txt')],
+     'Steam V1.0.0.0'),
     ('SSM7wMTweaks', '真三国无双7 with 猛将传', 'Dynasty Warriors 8',
-     'build/dinput8-platform.dll', 'SSM7_Tweaks.ini', []),
+     'build/dinput8-platform.dll', 'SSM7_Tweaks.ini', [], 'Steam V1.0.4.0'),
     ('SM2Tweaks', '战国无双2', 'Sengoku Musou 2',
-     'build/dinput8.dll', 'SM2_Tweaks.ini', []),
+     'build/dinput8.dll', 'SM2_Tweaks.ini', [], 'V1.0.0.0'),
 ]
 
 MODS_NOTE = """\
@@ -70,6 +71,10 @@ Gamepad and display tweaks for the Koei Musou ports (32-bit dinput8.dll proxy)
 One sub-zip per game. Extract only the one you need.
 
 {table}
+
+方括号里是补丁实际验证过的游戏版本，其他版本大概率也能用。
+The bracketed value is the game build each patch was verified against; other
+builds will most likely work too.
 
 SSM7 用的是 platform-only 版本，文件名同样叫 dinput8.dll，别拿错。
 SSM7 ships the platform-only build; inside its sub-zip the file is still named
@@ -115,18 +120,28 @@ Gamepad and display tweaks for the Koei Musou PC ports.
 
 ## 包内结构 / Contents
 
-按游戏分类，每个游戏一个子包，装哪个解哪个：
+按游戏分类，每个游戏一个子包，装哪个解哪个。
 One sub-zip per game — extract only the one you need:
 
-| 子包 | 游戏 | 安装文件 |
-| --- | --- | --- |
-| `MOZTweaks` | 无双蛇魔Z / Musou Orochi Z | `dinput8.dll` + `OrochiZPadX.ini` |
-| `SSM3Tweaks` | 真三国无双3 / Dynasty Warriors 4: Hyper | `dinput8.dll` + `SSM3_Tweaks.ini` |
-| `SSM4SPTweaks` | 真三国无双4 Special / Dynasty Warriors 5 Special | `dinput8.dll` + `SSM4_Tweaks.ini` |
-| `SSM5Tweaks` | 真三国无双5 / Dynasty Warriors 6 | `dinput8.dll` + `SSM5_Tweaks.ini` |
-| `SSM6DXTweaks` | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | `dinput8.dll` + `SSM6_Tweaks.ini` + `mods/` |
-| `SSM7wMTweaks` | 真三国无双7 with 猛将传 / Dynasty Warriors 8 | `dinput8.dll`（platform-only）+ `SSM7_Tweaks.ini` |
-| `SM2Tweaks` | 战国无双2 / Sengoku Musou 2 | `dinput8.dll` + `SM2_Tweaks.ini` |
+| 子包 | 游戏 | 适配版本 | 安装文件 |
+| --- | --- | --- | --- |
+| `MOZTweaks` | 无双蛇魔Z / Musou Orochi Z | `V1.0.0.0` | `dinput8.dll` + `OrochiZPadX.ini` |
+| `SSM3Tweaks` | 真三国无双3 / Dynasty Warriors 4: Hyper | 游侠繁体汉化 `V0.1.1.0`（`2.0.0.0`） | `dinput8.dll` + `SSM3_Tweaks.ini` |
+| `SSM4SPTweaks` | 真三国无双4 Special / Dynasty Warriors 5 Special | `V1.0.0.0` | `dinput8.dll` + `SSM4_Tweaks.ini` |
+| `SSM5Tweaks` | 真三国无双5 / Dynasty Warriors 6 | `V1.0.0.1` | `dinput8.dll` + `SSM5_Tweaks.ini` |
+| `SSM6DXTweaks` | 真三国无双6 with 猛将传 DX / Dynasty Warriors 7 DX | Steam `V1.0.0.0` | `dinput8.dll` + `SSM6_Tweaks.ini` + `mods/` |
+| `SSM7wMTweaks` | 真三国无双7 with 猛将传 / Dynasty Warriors 8 | Steam `V1.0.4.0` | `dinput8.dll`（platform-only）+ `SSM7_Tweaks.ini` |
+| `SM2Tweaks` | 战国无双2 / Sengoku Musou 2 | `V1.0.0.0` | `dinput8.dll` + `SM2_Tweaks.ini` |
+
+「适配版本」是补丁实际验证过的游戏版本。补丁按可执行文件名和内存特征码识别，其他版本大概率也能用；换了版本后某个功能失效的话，把 ini 里的 `log` 改成 `1` 跑一次，日志会写明哪一步没匹配上。
+"Tested version" is the build each patch was verified against. Other builds will most likely work; if something stops working after an update, set `log=1` and the log says which step failed to match.
+
+## 相对 V1.0.1 的变化 / Changes since V1.0.1
+
+- **新增真三国无双5（`SM5_WIN.exe`）支持**，子包 `SSM5Tweaks`。该作的手柄列表按**产品名白名单**过滤，名字不在名单里的设备能被枚举但不会被选中，所以虚拟手柄默认报成 `Controller (XBOX 360 For Windows)`；用右摇杆转视角，因此默认暴露 6 轴（左摇杆 + 扳机 + 右摇杆）。
+- **真三国无双5 的十字键不接左摇杆。** 只作为 POV 方向帽和四个独立按钮交给游戏（可单独绑键、不会带动角色），菜单光标改在**游戏自己的键盘设备**上注入方向键事件。按住方向超过 0.4 秒后自动连发，光标连续移动。
+- **真三国无双5 的无边框全屏修好了。** 该作只静态导入 `MessageBoxA`，`CreateWindowExA` 的 IAT 钩子打不上，原来的窗口识别完全失效；现在改为按注册类名 `SangokuMusou5PC` 轮询接管，找不到时还会兜底接管进程唯一的可见大窗口。
+- 新增 `dpad_menu_repeat_ms` / `dpad_menu_repeat_delay_ms` 长按连发（默认关闭，只有真三5 默认开启）。
 
 ## 相对 V1.0.0 的变化 / Changes since V1.0.0
 
@@ -175,12 +190,12 @@ def main():
             stale.unlink()
 
     subs = []
-    for name, _, _, dll, ini, extras in GAMES:
+    for name, _, _, dll, ini, extras, _ver in GAMES:
         subs.append(build_subzip(name, dll, ini, extras))
 
     rows = '\n'.join(
-        f'  {name}_{VERSION}.zip  {cn} / {en}'
-        for name, cn, en, *_ in GAMES)
+        f'  {name}_{VERSION}.zip  {cn} / {en}  [{ver}]'
+        for name, cn, en, _dll, _ini, _extras, ver in GAMES)
     text = README.format(version=VERSION, table=rows).replace('\n', '\r\n')
 
     total = OUT / f'MUSOUTweaksPC_{VERSION}.zip'

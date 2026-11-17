@@ -7,15 +7,17 @@
 
 ## 支持的游戏
 
-| 游戏 | 可执行文件 | 配置文件 | 补丁作用 |
-| --- | --- | --- | --- |
-| 真三国无双3(SSM3_Shin Sangokumusou3) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | 手柄适配、十字键、无边框窗口、输入法隔离 |
-| 真三国无双4 Special(SSM4SP_Shin Sangokumusou4 Special) | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | 手柄适配、十字键菜单导航、无边框窗口 |
-| 真三国无双5(SSM5_Shin Sangokumusou5) | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | 手柄适配（按游戏名单报告设备名）、右摇杆转视角、十字键、无边框全屏 |
-| 真三国无双6with猛将传DX(SSM6DX_Shin Sangokumusou6 with Moushouden DX) | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | 手柄适配、十字键菜单导航、无边框全屏缩放、后台扫描器崩溃修复 |
-| 真三国无双7with猛将传(SSM7DX_Shin Sangokumusou7 with Moushouden) | `Launch.exe` | `SSM7_Tweaks.ini` | 无边框全屏、清晰缩放、内部渲染分辨率、3D 镜头远近 |
-| 战国无双2(SM2_SengokuMusou2) | `SW2.exe` | `SM2_Tweaks.ini` | 手柄适配、无边框窗口、引擎分辨率移植、HUD 校正、帧率限制 |
-| 无双蛇魔Z(MOZ_MusouOrochi Z) | `OROCHI_Z_TC.exe` | `OrochiZPadX.ini` | 手柄适配、无边框窗口、3840×2160 独立渲染、镜头远近 |
+| 游戏 | 适配版本 | 可执行文件 | 配置文件 | 补丁作用 |
+| --- | --- | --- | --- | --- |
+| 真三国无双3(SSM3_Shin Sangokumusou3) | 游侠繁体汉化 `V0.1.1.0`（`2.0.0.0`） | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | 手柄适配、十字键、无边框窗口、输入法隔离 |
+| 真三国无双4 Special(SSM4SP_Shin Sangokumusou4 Special) | `V1.0.0.0` | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | 手柄适配、十字键菜单导航、无边框窗口 |
+| 真三国无双5(SSM5_Shin Sangokumusou5) | `V1.0.0.1` | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | 手柄适配（按游戏名单报告设备名）、右摇杆转视角、十字键、无边框全屏 |
+| 真三国无双6with猛将传DX(SSM6DX_Shin Sangokumusou6 with Moushouden DX) | Steam `V1.0.0.0` | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | 手柄适配、十字键菜单导航、无边框全屏缩放、后台扫描器崩溃修复 |
+| 真三国无双7with猛将传(SSM7DX_Shin Sangokumusou7 with Moushouden) | Steam `V1.0.4.0` | `Launch.exe` | `SSM7_Tweaks.ini` | 无边框全屏、清晰缩放、内部渲染分辨率、3D 镜头远近 |
+| 战国无双2(SM2_SengokuMusou2) | `V1.0.0.0` | `SW2.exe` | `SM2_Tweaks.ini` | 手柄适配、无边框窗口、引擎分辨率移植、HUD 校正、帧率限制 |
+| 无双蛇魔Z(MOZ_MusouOrochi Z) | `V1.0.0.0` | `OROCHI_Z_TC.exe` | `OrochiZPadX.ini` | 手柄适配、无边框窗口、3840×2160 独立渲染、镜头远近 |
+
+「适配版本」是补丁实际验证过的游戏版本。补丁按可执行文件名和内存特征码识别，其他版本大概率也能用；如果换了版本后某个功能失效，把 ini 里的 `log` 改成 `1` 跑一次，日志会写明哪一步没匹配上。
 
 ## 各补丁具体做什么
 
@@ -31,7 +33,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 ### 真三国无双5(SSM5_Shin Sangokumusou5)
 
-这一作的手柄列表是**按名字过滤**的：`SM5_WIN.exe` 里带一份 DirectInput 产品名白名单（Xbox 360 手柄、罗技 ChillStream、ELECOM/SANWA 等），名字不在名单里的设备能被枚举到但永远不会被选中，表现成手柄完全没反应。所以虚拟手柄默认报成 `Controller (XBOX 360 For Windows)`（`pad_name`）。本作用右摇杆转视角，虚拟设备默认暴露 **6 轴**（左摇杆 + 扳机 + 右摇杆，`pad_axes=6`），而不是其他作品的两轴。十字键同时给出 POV 方向帽和 50 毫秒点动镜像（`dpad_as_left_stick=2`）：菜单能走一格，角色几乎不动。窗口侧是无边框全屏 + 输入法隔离 + 跳过关闭确认框，画面按游戏自己选的分辨率渲染后由窗口拉伸铺满。
+这一作的手柄列表是**按名字过滤**的：`SM5_WIN.exe` 里带一份 DirectInput 产品名白名单（Xbox 360 手柄、罗技 ChillStream、ELECOM/SANWA 等），名字不在名单里的设备能被枚举到但永远不会被选中，表现成手柄完全没反应。所以虚拟手柄默认报成 `Controller (XBOX 360 For Windows)`（`pad_name`）。本作用右摇杆转视角，虚拟设备默认暴露 **6 轴**（左摇杆 + 扳机 + 右摇杆，`pad_axes=6`），而不是其他作品的两轴。**十字键只作为 POV 方向帽和四个独立按钮交给游戏**（`dpad_as_left_stick=0`），可以单独绑键，也不会带动角色；菜单光标走游戏自己的键盘设备（`dpad_arrow_keys=1`，该作以缓冲模式读键盘），按住超过 0.4 秒后自动连发。窗口侧是无边框全屏 + 输入法隔离 + 跳过关闭确认框，画面按游戏自己选的分辨率渲染后由窗口拉伸铺满。
 
 ### 真三国无双6with猛将传DX(SSM6DX_Shin Sangokumusou6 with Moushouden DX)
 
@@ -143,15 +145,17 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## Supported games
 
-| Game | Executable | Config | What the patch does |
-| --- | --- | --- | --- |
-| Dynasty Warriors 4: Hyper (SSM3) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | Gamepad adapter, D-pad, borderless window, IME isolation |
-| Dynasty Warriors 5 Special (SSM4SP) | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless window |
-| Dynasty Warriors 6 (SSM5) | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | Gamepad adapter with a whitelisted device name, right-stick camera, D-pad, borderless fullscreen |
-| Dynasty Warriors 7 with Xtreme Legends DX (SSM6DX) | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless scaling, background-scanner crash fix |
-| Dynasty Warriors 8 with Xtreme Legends (SSM7DX) | `Launch.exe` | `SSM7_Tweaks.ini` | Borderless fullscreen, sharp scaling, internal render resolution, 3D camera distance |
-| Samurai Warriors 2 (SM2) | `SW2.exe` | `SM2_Tweaks.ini` | Gamepad adapter, borderless window, engine resolution port, HUD fix, frame limiter |
-| Musou Orochi Z (MOZ) | `OROCHI_Z_TC.exe` | `OrochiZPadX.ini` | Gamepad adapter, borderless window, 3840x2160 internal rendering, camera distance |
+| Game | Tested version | Executable | Config | What the patch does |
+| --- | --- | --- | --- | --- |
+| Dynasty Warriors 4: Hyper (SSM3) | Aliyun/Traditional-Chinese fan patch `V0.1.1.0` (`2.0.0.0`) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | Gamepad adapter, D-pad, borderless window, IME isolation |
+| Dynasty Warriors 5 Special (SSM4SP) | `V1.0.0.0` | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless window |
+| Dynasty Warriors 6 (SSM5) | `V1.0.0.1` | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | Gamepad adapter with a whitelisted device name, right-stick camera, D-pad, borderless fullscreen |
+| Dynasty Warriors 7 with Xtreme Legends DX (SSM6DX) | Steam `V1.0.0.0` | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless scaling, background-scanner crash fix |
+| Dynasty Warriors 8 with Xtreme Legends (SSM7DX) | Steam `V1.0.4.0` | `Launch.exe` | `SSM7_Tweaks.ini` | Borderless fullscreen, sharp scaling, internal render resolution, 3D camera distance |
+| Samurai Warriors 2 (SM2) | `V1.0.0.0` | `SW2.exe` | `SM2_Tweaks.ini` | Gamepad adapter, borderless window, engine resolution port, HUD fix, frame limiter |
+| Musou Orochi Z (MOZ) | `V1.0.0.0` | `OROCHI_Z_TC.exe` | `OrochiZPadX.ini` | Gamepad adapter, borderless window, 3840x2160 internal rendering, camera distance |
+
+"Tested version" is the build the patch was verified against. It identifies games by executable name and in-memory signatures, so other builds will most likely work too; if something stops working after an update, set `log=1` in the INI and the log will say which step failed to match.
 
 ## What each patch does
 
@@ -167,7 +171,7 @@ Same gamepad and window handling as SSM3, plus a signature-verified native menu 
 
 ### Dynasty Warriors 6 (SSM5)
 
-This port filters controllers **by product name**: `SM5_WIN.exe` carries a whitelist of DirectInput names (Xbox 360 pad, Logitech ChillStream, ELECOM/SANWA pads, ...) and silently ignores anything else, so a device with an unknown name is enumerated but never selected and the pad looks dead. The virtual device therefore reports itself as `Controller (XBOX 360 For Windows)` by default (`pad_name`). The game steers the camera with the right stick, so the device exposes **six axes** (`pad_axes=6`: left stick, triggers, right stick) instead of the two the rest of the family uses. The D-pad is both a POV hat and a 50 ms pulsed stick nudge (`dpad_as_left_stick=2`), so menus step one entry per press while the character barely moves. On the window side: borderless fullscreen, IME isolation, close-confirmation bypass; the game renders at its own resolution and the window stretches that image.
+This port filters controllers **by product name**: `SM5_WIN.exe` carries a whitelist of DirectInput names (Xbox 360 pad, Logitech ChillStream, ELECOM/SANWA pads, ...) and silently ignores anything else, so a device with an unknown name is enumerated but never selected and the pad looks dead. The virtual device therefore reports itself as `Controller (XBOX 360 For Windows)` by default (`pad_name`). The game steers the camera with the right stick, so the device exposes **six axes** (`pad_axes=6`: left stick, triggers, right stick) instead of the two the rest of the family uses. **The D-pad is only a POV hat plus four independent buttons** (`dpad_as_left_stick=0`): it keeps its own bindings and never walks the character, while menu navigation goes through the game's own keyboard device (`dpad_arrow_keys=1`, this build reads the keyboard in buffered mode) and repeats automatically after a 0.4 s hold. On the window side: borderless fullscreen, IME isolation, close-confirmation bypass; the game renders at its own resolution and the window stretches that image.
 
 ### Dynasty Warriors 7 with Xtreme Legends DX (SSM6DX)
 
