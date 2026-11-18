@@ -37,6 +37,13 @@ static int dpadArrowKeys=0;
 // Hold-to-repeat cadence of the SendInput arrows: a synthesised key never
 // auto-repeats, so a held direction has to be re-pressed by hand.
 static int arrowKeyPulseMs=40, arrowKeyGapMs=80;
+// Published by the D3D9 layer: 1 while the frame the game just finished has no
+// 3D scene in it, i.e. the game is sitting in a menu, loading screen or results
+// page. Titles that take both their menu cursor and their character movement
+// from the same keyboard path (Sengoku Musou 2) only get arrow injection while
+// this is set, so a D-pad press can never walk the character.
+static volatile LONG menuSceneActive=0;
+static int menuInjectOnly=0;
 static volatile LONG lastDpadBits=0;
 // Keyboard arrows the adapter is currently reporting as pressed on behalf of the
 // D-pad. The real keyboard device is shared, so only ever OR bits in.
@@ -265,6 +272,10 @@ static void releaseArrowKeys() {
 }
 static void maybeSendArrowKeys() {
  if(dpadArrowKeys<2)return;
+ // In a battle scene the arrows would walk the character, so hold them back
+ // unless the D3D9 layer reports a menu frame. A direction that was already
+ // down is released so the character stops the moment the scene comes back.
+ if(menuInjectOnly&&!menuSceneActive){releaseArrowKeys();return;}
  WORD want=arrowDesired();
  ULONGLONG now=GetTickCount64();
  if(want!=arrowInputHeld){
@@ -340,7 +351,7 @@ static void init() {
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.48 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.49 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -365,7 +376,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x)getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.48 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
+ logf("MUSOUTweaksPC 2.49 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -407,16 +418,17 @@ static void init() {
  // SSM6 DX and DW6 PC menus read the keyboard arrows, so the D-pad drives them
  // through the game's own keyboard device instead of the left stick: menus work,
  // the character stays put and the D-pad keeps its own bindings.
- // Sengoku Musou 2 reads its keyboard only through the window message loop (no
- // GetKeyboardState anywhere, and it never polls the DirectInput keyboard device
- // it creates), so for that title the arrows go in through SendInput instead.
+ // Sengoku Musou 2 takes its menu cursor and its character movement from the
+ // very same keyboard path, so SendInput is used and the D3D9 layer is asked to
+ // tell us which frames are menus; outside those the arrows stay off.
  bool arrowDefault=!_stricmp(gameExeName,"SM6TC.exe")||!_stricmp(gameExeName,"SM6EN.exe")||!_stricmp(gameExeName,"SM6JP.exe")
   ||!_stricmp(gameExeName,"SM5_WIN.exe");
- int arrowAuto=arrowDefault?1:(!_stricmp(gameExeName,"SW2.exe")?3:0);
+ int arrowAuto=arrowDefault?1:(!_stricmp(gameExeName,"SW2.exe")?2:0);
 dpadArrowKeys=dpadArrowKeysSetting<0?arrowAuto:dpadArrowKeysSetting;
 arrowKeyPulseMs=std::clamp(opt("dpad_arrow_pulse_ms",40),10,500);
 arrowKeyGapMs=std::clamp(opt("dpad_arrow_gap_ms",80),10,1000);
-logf("D-pad arrow-key synthesis=%d pulse=%dms gap=%dms",dpadArrowKeys,arrowKeyPulseMs,arrowKeyGapMs);
+menuInjectOnly=std::clamp(opt("menu_inject_only",!_stricmp(gameExeName,"SW2.exe")?1:0),0,1);
+logf("D-pad arrow-key synthesis=%d pulse=%dms gap=%dms menu_only=%d",dpadArrowKeys,arrowKeyPulseMs,arrowKeyGapMs,menuInjectOnly);
  // B (bit1) and Start/Menu (bit7) press Enter by default for Orochi Z. Every
  // other title keeps this off: a stray Enter during play is not harmless there.
  int padEnterSetting=opt("pad_enter_buttons",-1);

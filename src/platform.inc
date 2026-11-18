@@ -14,6 +14,18 @@ static void initializeAll();
 static void attachExistingMainWindow();
 static int sharedInput=1,windowMode=1,imeIsolation=1,comCompatibility=1,quickClose=1;
 static int fpsLimit=0;
+// Some ports (Sengoku Musou 2) feed their menus and their character movement
+// from one and the same input path, so a D-pad press that walks a menu cursor
+// also walks the character. There is no second channel to switch to, so the
+// only way to keep the two apart is to inject only while the game is drawing a
+// menu. A battle frame submits hundreds of real 3D draws (a position type other
+// than XYZRHW); a menu, loading or results frame submits almost none.
+// 1 = count 3D draws per frame and publish menuSceneActive, 0 = off.
+static int menuDetect=0;
+static volatile LONG frameSceneDraws=0;
+static volatile LONG menuSceneDraws=0;
+static int menuDrawThreshold=16;
+static int menuHoldFrames=2,menuExitFrames=2;
 static int renderWidth=0,renderHeight=0;
 static int internalRenderWidth=0,internalRenderHeight=0;
 static bool singlePresentMode=true;
@@ -399,6 +411,68 @@ static bool scaleBackbufferToNative(IDirect3DDevice9* d,const RECT* source,const
  if(temp)temp->Release();back->Release();
  return SUCCEEDED(copyHr)&&(cubic||SUCCEEDED(scaleHr));
 }
+static void hookTable(void** table,size_t index,void* hook);
+// Published to the input layer: 1 while the frame the game just finished looks
+// like a menu rather than a 3D battle scene. Declared here because the D-pad
+// arrow-key injector lives above this include and reads it.
+static void updateMenuScene() {
+ if(!menuDetect)return;
+ LONG draws=InterlockedExchange(&frameSceneDraws,0);
+ InterlockedExchange(&menuSceneDraws,draws);
+ static int menuStreak=0,sceneStreak=0;
+ static LONG loggedDraws=-1;
+ static unsigned frames=0;
+ if(draws<menuDrawThreshold){menuStreak++;sceneStreak=0;}
+ else{sceneStreak++;menuStreak=0;}
+ LONG active=InterlockedCompareExchange(&menuSceneActive,0,0);
+ if(!active&&menuStreak>=menuHoldFrames){
+  InterlockedExchange(&menuSceneActive,1);
+  logf("menu scene entered 3d_draws=%ld threshold=%d (D-pad arrow injection enabled)",draws,menuDrawThreshold);
+ }else if(active&&sceneStreak>=menuExitFrames){
+  InterlockedExchange(&menuSceneActive,0);
+  logf("menu scene left 3d_draws=%ld (D-pad arrow injection disabled)",draws);
+ }
+ // Periodically record the raw count so a threshold can be calibrated from a
+ // single run instead of guessing which screens submit how much geometry.
+ if(++frames>=180){frames=0;if(draws!=loggedDraws){loggedDraws=draws;logf("scene 3d draws=%ld menu=%ld",draws,active);}}
+}
+static void countSceneDraw(IDirect3DDevice9* d) {
+ if(!menuDetect)return;
+ DWORD fvf=0;
+ if(FAILED(d->GetFVF(&fvf)))return;
+ if((fvf&D3DFVF_POSITION_MASK)!=D3DFVF_XYZRHW)InterlockedIncrement(&frameSceneDraws);
+}
+static HRESULT WINAPI menuDrawPrimitive(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT start,UINT count) {
+ auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,UINT))originalMethod(d,81);
+ if(!fn)return D3DERR_INVALIDCALL;
+ if(count)countSceneDraw(d);
+ return fn(d,type,start,count);
+}
+static HRESULT WINAPI menuDrawIndexedPrimitive(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,INT base,UINT min,UINT num,UINT start,UINT count) {
+ auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,INT,UINT,UINT,UINT,UINT))originalMethod(d,82);
+ if(!fn)return D3DERR_INVALIDCALL;
+ if(count)countSceneDraw(d);
+ return fn(d,type,base,min,num,start,count);
+}
+static HRESULT WINAPI menuDrawPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT count,const void* data,UINT stride) {
+ auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,const void*,UINT))originalMethod(d,83);
+ if(!fn)return D3DERR_INVALIDCALL;
+ if(count)countSceneDraw(d);
+ return fn(d,type,count,data,stride);
+}
+static HRESULT WINAPI menuDrawIndexedPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT min,UINT num,const void* indexData,D3DFORMAT indexFormat,const void* vertexData,UINT vertexStride) {
+ auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,UINT,const void*,D3DFORMAT,const void*,UINT))originalMethod(d,84);
+ if(!fn)return D3DERR_INVALIDCALL;
+ if(num)countSceneDraw(d);
+ return fn(d,type,min,num,indexData,indexFormat,vertexData,vertexStride);
+}
+static void installMenuDetectHooks(void** table) {
+ if(!menuDetect||!table)return;
+ hookTable(table,81,(void*)menuDrawPrimitive);
+ hookTable(table,82,(void*)menuDrawIndexedPrimitive);
+ hookTable(table,83,(void*)menuDrawPrimitiveUP);
+ hookTable(table,84,(void*)menuDrawIndexedPrimitiveUP);
+}
 static void pacePresentation() {
  if(fpsLimit<=0)return;
  static std::mutex paceMutex;
@@ -650,6 +724,9 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
  pollCameraHotkeys();
  // The frame is complete: the next frame gets a fresh background slot.
  InterlockedExchange(&orochiBackgroundTaken,0);
+ // Decide, from the geometry this frame submitted, whether the game is sitting
+ // in a menu; the D-pad arrow injector only fires while it is.
+ updateMenuScene();
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,const RECT*,const RECT*,HWND,const RGNDATA*))originalMethod(d,17);
  bool firstParameters=false;{std::lock_guard<std::mutex> lock(tableMutex);firstParameters=loggedPrimaryPresentParameters.insert(d).second;}
  if(firstParameters)logf("D3D primary Present parameters source=%d [%ld,%ld,%ld,%ld] destination=%d [%ld,%ld,%ld,%ld] dirty=%d",source!=nullptr,source?source->left:0,source?source->top:0,source?source->right:0,source?source->bottom:0,destination!=nullptr,destination?destination->left:0,destination?destination->top:0,destination?destination->right:0,destination?destination->bottom:0,dirty!=nullptr);
@@ -770,6 +847,7 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  logf("D3D CreateDevice device=%p focus=%p present_hwnd=%p game_hwnd=%p ours=%d flags=%08lx request=%ux%u/%d actual=%ux%u/%d hr=%08lx",SUCCEEDED(hr)&&out?*out:nullptr,focus,p->hDeviceWindow,gameWindow,ours,flags,requestedW,requestedH,requestedWindowed,p->BackBufferWidth,p->BackBufferHeight,p->Windowed,hr);
  if(SUCCEEDED(hr)&&*out){
   if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture);}
+  if(ours)installMenuDetectHooks(*(void***)*out);
   if(ours){
    UINT logicalW=requestedW,logicalH=requestedH;
    if(((legacyInternalResolutionEnabled()&&nativeOutput)||nativeResolution)&&(!logicalW||!logicalH))getNativeDisplaySize(logicalW,logicalH);
@@ -838,6 +916,7 @@ static unsigned hookExistingD3D9Tables(void* present,void* reset,void** probeTab
       if((uintptr_t)table+119*sizeof(void*)>end)continue;
       if(table==probeTable||!d3d9DeviceTable(table,moduleBase,moduleEnd,present,reset))continue;
       hookTable(table,17,(void*)platformPresent);hookTable(table,16,(void*)platformReset);
+      installMenuDetectHooks(table);
       // One table is enough: an overlay can leave a second matching copy behind,
       // and pacing twice per frame would halve the frame rate instead of capping it.
       if(!firstTable)firstTable=table;hooked++;break;
@@ -1212,11 +1291,18 @@ static void platformConfigure() {
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("platform",key,def,iniPath);};
  sharedInput=opt("shared_input",1);windowMode=std::clamp(opt("window_mode",1),0,1);
  imeIsolation=opt("disable_game_ime",1);comCompatibility=opt("com_apartment_compat",1);quickClose=opt("close_without_confirmation",1);
- // Sengoku Musou 2 runs its logic off the frame cadence: uncapped it spins the
- // menus and the camera far past what the port was built for, so it is limited
- // to 65 by default. Every other title stays uncapped unless configured.
- int fpsDefault=!_stricmp(gameExeName,"SW2.exe")?65:0;
+ // Sengoku Musou 2 advances its logic once per rendered frame, so the frame
+ // rate *is* the game speed: at 65 FPS everything runs 8.3% fast, which reads as
+ // a permanent slight speed-up. 60 FPS is the cadence the port was built for.
+ // Every other title stays uncapped unless configured.
+ int fpsDefault=!_stricmp(gameExeName,"SW2.exe")?60:0;
  fpsLimit=std::clamp(opt("fps_limit",fpsDefault),0,240);
+ // Menu-only D-pad arrow injection. Sengoku Musou 2 takes both its menu cursor
+ // and its character movement from the same keyboard path, so the arrows are
+ // only injected while the frame contains no 3D scene.
+ int menuDefault=!_stricmp(gameExeName,"SW2.exe")?1:0;
+ menuDetect=std::clamp(opt("menu_inject_only",menuDefault),0,1);
+ menuDrawThreshold=std::clamp(opt("menu_draw_threshold",16),0,4000);
  if(windowMode){
   HMODULE user=GetModuleHandleA("user32.dll");auto dpi=(BOOL(WINAPI*)(HANDLE))GetProcAddress(user,"SetProcessDpiAwarenessContext");
   auto threadDpi=(HANDLE(WINAPI*)(HANDLE))GetProcAddress(user,"SetThreadDpiAwarenessContext");

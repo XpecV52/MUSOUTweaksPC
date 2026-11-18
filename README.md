@@ -45,7 +45,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 ### 战国无双2(SM2_SengokuMusou2)
 
-手柄适配 + 十字键 + 无边框窗口 + 跳过关闭确认框。十字键只作为 POV 方向帽和四个独立按钮交给游戏（`dpad_pov=1`、`dpad_as_left_stick=0`），可以单独绑键、也不会带动角色；菜单光标走键盘方向键（`dpad_arrow_keys=2`，`SendInput` 注入）。另有一条独立的引擎分辨率移植路径：等待受保护的可执行文件解密后，在内存中替换宽高查询函数并校正 HUD/菜单几何，`0/0` 表示跟随当前显示器物理分辨率。帧率限制默认 **65 FPS**（`fps_limit` 在程序内对 `SW2.exe` 就取 65），不修改 Windows 桌面分辨率或刷新率。
+手柄适配 + 十字键 + 无边框窗口 + 跳过关闭确认框。十字键只作为 POV 方向帽和四个独立按钮交给游戏（`dpad_pov=1`、`dpad_as_left_stick=0`），可以单独绑键、也不会带动角色；菜单光标走键盘方向键（`dpad_arrow_keys=2`，`SendInput` 注入）。这一作的菜单光标和角色移动读的是**同一路键盘输入**，所以补丁在 D3D9 里统计每帧的真实 3D 绘制次数，只在菜单/读盘/结算画面（`menu_inject_only=1`）注入方向键，战斗场景完全不注入——菜单能动、角色不会跟着走。另有一条独立的引擎分辨率移植路径：等待受保护的可执行文件解密后，在内存中替换宽高查询函数并校正 HUD/菜单几何，`0/0` 表示跟随当前显示器物理分辨率。帧率限制默认 **60 FPS**（`fps_limit` 在程序内对 `SW2.exe` 就取 60）：这一作逻辑每渲染一帧推进一次，帧率就是游戏速度，65 帧会整体快 8.3%。不修改 Windows 桌面分辨率或刷新率。
 
 ### 无双蛇魔Z(MOZ_MusouOrochi Z)
 
@@ -110,8 +110,9 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ### 2.48
 - **战国无双2：修复十字键不生效**。这一作的十字键自 2.35 起只作为 POV 方向帽和四个独立按钮转发（`dpad_pov=1`、`dpad_as_left_stick=0`），但它的菜单既不认按钮也不认 POV —— 早先能用是因为 `SM2_Tweaks.ini` 里写的是 `dpad_as_left_stick=1`（把方向桥接进左摇杆轴），桥接一关就彻底没反应。诊断确认 `SW2.exe` 从 `USER32` 只导入了 `MessageBoxA`：既不调 `GetKeyboardState`/`GetAsyncKeyState`，也从不 `GetDeviceState`/`GetDeviceData` 它自己创建的那个键盘设备（日志里只有 `CreateDevice real keyboard=1`，没有任何键盘读取），所以「在游戏键盘设备上塞键」这条老路对它无效。
-- 新增 `dpad_arrow_keys=2` / `3`：`2` 用 `SendInput` 把方向键注入到与物理按键完全相同的一层（DirectInput 键盘设备和窗口消息循环都能看到）；`3` 只向游戏窗口投递 `WM_KEYDOWN`/`WM_KEYUP`，DirectInput 设备完全看不到。战国2 自动取 `3`，真三6 DX / 真三5 仍是 `1`。合成按键不会自动重复，所以按住方向时补丁把它切成一次次短按（新配置项 `dpad_arrow_pulse_ms`，默认 `40`；`dpad_arrow_gap_ms`，默认 `80`，合起来约每秒 8 格）。左摇杆完全不动，十字键仍可单独绑键。
-- 战国2 帧率上限的程序内默认值改为 **65**（`fps_limit`），ini 里没有这一项也生效。
+- 新增 `dpad_arrow_keys=2` / `3`：`2` 用 `SendInput` 把方向键注入到与物理按键完全相同的一层（DirectInput 键盘设备和窗口消息循环都能看到）；`3` 只向游戏窗口投递 `WM_KEYDOWN`/`WM_KEYUP`，DirectInput 设备完全看不到。战国2 自动取 `2`，真三6 DX / 真三5 仍是 `1`。合成按键不会自动重复，所以按住方向时补丁把它切成一次次短按（新配置项 `dpad_arrow_pulse_ms`，默认 `40`；`dpad_arrow_gap_ms`，默认 `80`，合起来约每秒 8 格）。左摇杆完全不动，十字键仍可单独绑键。
+- 新增 `menu_inject_only` / `menu_draw_threshold`：**只在菜单帧注入方向键**。战国2 的菜单光标与角色移动共用同一路键盘输入，换注入通道分不开，所以在 D3D9 里统计每帧提交的真实 3D 绘制（FVF 位置类型不是 `XYZRHW` 的 `DrawPrimitive`/`DrawIndexedPrimitive` 及其 `UP` 版本），低于阈值即视为菜单帧、连续 2 帧才切换。战斗场景里完全不注入，十字键不会带动角色。日志会打印 `scene 3d draws=N` 与 `menu scene entered/left` 供校准。
+- 战国2 帧率上限的程序内默认值改为 **60**（`fps_limit`），ini 里没有这一项也生效。这一作**逻辑每渲染一帧推进一次，帧率就是游戏速度**：之前按 65 锁帧，实测 `pace target=65 actual=64.99` 帧率完全准确，但整体仍快 8.3%——那不是锁帧失效，而是 65 本身就比原作的 60 帧快。
 - **战国2：修复锁帧完全没生效**。这一作的 D3D9 设备从来就没被挂上钩子——它在 `dinput8.dll` 加载之前就已经解析好 `Direct3DCreate9`，早期 IAT 钩子永远不触发；唯一的退路「晚挂钩」线程又因为 `gameoverlayrenderer.dll` 存在就整段放弃，于是 `Present` 没被接管，`fps_limit` 一次都没跑过（实测 165 FPS，等于显示器刷新率）。现在晚挂钩不再因为覆盖层存在就直接退出：先给早期钩子一段宽限期，仍未接管才回退到堆扫描，并且只挂第一张匹配的设备 vtable，避免每帧走两次节拍把帧率减半。
 
 ### 2.47
@@ -143,7 +144,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.48**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.49**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -194,7 +195,7 @@ This title uses the platform-only build, `dinput8-platform.dll` (the game alread
 
 ### Samurai Warriors 2 (SM2)
 
-Gamepad adapter, D-pad, borderless window and close-confirmation bypass. A separate engine-resolution port waits for the protected executable to decrypt, then replaces its width/height getters in memory and corrects HUD/menu geometry; `0/0` follows the active display's physical resolution. The frame limiter defaults to **65 FPS** (`fps_limit=65`) and never touches the Windows desktop mode or refresh rate.
+Gamepad adapter, D-pad, borderless window and close-confirmation bypass. A separate engine-resolution port waits for the protected executable to decrypt, then replaces its width/height getters in memory and corrects HUD/menu geometry; `0/0` follows the active display's physical resolution. The frame limiter defaults to **60 FPS** (`fps_limit=60`) and never touches the Windows desktop mode or refresh rate.
 
 ### Musou Orochi Z (MOZ)
 
@@ -259,8 +260,9 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ### 2.48
 - **Sengoku Musou 2: fixed the dead D-pad.** Since 2.35 the D-pad is only forwarded as a POV hat plus four independent buttons (`dpad_pov=1`, `dpad_as_left_stick=0`), but this title's menus read neither. It used to work only because `SM2_Tweaks.ini` carried `dpad_as_left_stick=1` (bridging the directions into the left-stick axes); turning the bridge off left the D-pad with no path at all. Diagnostics confirmed `SW2.exe` imports nothing from `USER32` but `MessageBoxA`: it never calls `GetKeyboardState`/`GetAsyncKeyState`, and it never calls `GetDeviceState`/`GetDeviceData` on the keyboard device it creates (the log shows `CreateDevice real keyboard=1` and no keyboard read at all), so pressing keys on the game's own keyboard device cannot work for it.
-- New `dpad_arrow_keys=2` / `3`: `2` injects the arrows with `SendInput`, i.e. at exactly the layer a physical key press arrives at, so both the DirectInput keyboard device and the window message loop see them; `3` only posts `WM_KEYDOWN`/`WM_KEYUP` to the game window, leaving the DirectInput device untouched. Sengoku Musou 2 selects `3` automatically; SSM6 DX and DW6 keep `1`. A synthesised key never auto-repeats, so a held direction is chopped into short presses (`dpad_arrow_pulse_ms`, default `40`) separated by gaps (`dpad_arrow_gap_ms`, default `80`) — about eight menu steps per second. The left stick never moves and the D-pad keeps its own bindings.
-- Sengoku Musou 2 now defaults to a **65 FPS** cap in code (`fps_limit`), even when the ini does not carry the key.
+- New `dpad_arrow_keys=2` / `3`: `2` injects the arrows with `SendInput`, i.e. at exactly the layer a physical key press arrives at, so both the DirectInput keyboard device and the window message loop see them; `3` only posts `WM_KEYDOWN`/`WM_KEYUP` to the game window, leaving the DirectInput device untouched. Sengoku Musou 2 selects `2` automatically; SSM6 DX and DW6 keep `1`. A synthesised key never auto-repeats, so a held direction is chopped into short presses (`dpad_arrow_pulse_ms`, default `40`) separated by gaps (`dpad_arrow_gap_ms`, default `80`) — about eight menu steps per second. The left stick never moves and the D-pad keeps its own bindings.
+- New `menu_inject_only` / `menu_draw_threshold`: **arrows are injected only on menu frames**. Sengoku Musou 2 feeds its menu cursor and its character movement from one and the same keyboard path, so no injection channel can tell them apart; the D3D9 layer therefore counts the real 3D draws a frame submits (position type other than `XYZRHW`, across `DrawPrimitive`/`DrawIndexedPrimitive` and their `UP` variants) and treats a frame below the threshold as a menu, switching state only after two consecutive frames. Battles get no arrows at all, so the D-pad can never walk the character. The log prints `scene 3d draws=N` and `menu scene entered/left` for calibration.
+- Sengoku Musou 2 now defaults to a **60 FPS** cap in code (`fps_limit`), even when the ini does not carry the key. This port advances its logic once per rendered frame, so **the frame rate is the game speed**: the previous 65 FPS cap measured exactly right (`pace target=65 actual=64.99`) and still played 8.3% fast, because 65 is simply faster than the 60 the port was built for.
 - **Sengoku Musou 2: the frame limiter never ran at all.** Its D3D9 device was never hooked: the build resolves `Direct3DCreate9` before `dinput8.dll` is loaded, so the early IAT hook never fires, and the fallback "late" watcher bailed out entirely whenever `gameoverlayrenderer.dll` was present — which left `Present` unhooked and `fps_limit` unused (measured 165 FPS, i.e. the display refresh). The watcher now gives the early hook a grace period and only then falls back to the heap scan, and it hooks a single matching device vtable so pacing cannot run twice per frame and halve the frame rate.
 
 ### 2.47
@@ -292,4 +294,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.48**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.49**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
