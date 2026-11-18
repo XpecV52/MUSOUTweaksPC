@@ -27,6 +27,8 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 **分辨率保持游戏自身 1280×960**，只由无边框窗口放大，任何高分辨率覆写都会被拒绝——这一作的引擎画布和 UI 是按固定尺寸写死的，仅改 D3D 后备缓冲区会裁切画面。
 
+**小地图放大**：这一作的小地图只有 104×128 像素，在放大到桌面尺寸的窗口里显得很小。补丁在 D3D9 里认出「采样 410×440 地图图集、4 顶点 `TRIANGLESTRIP`、绘制区域约 104×128」的那一次绘制，复制它的顶点、以四边形右上角为锚点等比放大后提交副本，默认 **160%**（`minimap_scale`）。游戏自己的顶点缓冲不改，同一帧其他 HUD 不受影响，上下分屏时每个视口各自贴自己的右上角。运行中可用 **`Ctrl+Alt+F2` 放大、`Ctrl+Alt+F3` 缩小**（每次 10%，范围 80–320%，按住可连调），新值立即写回 ini。
+
 ### 真三国无双4 Special(SSM4SP_Shin Sangokumusou4 Special)
 
 与真三3 同一套手柄与窗口处理，另外通过代码指纹校验定位了本作的原生菜单映射表，因此十字键可以在游戏菜单里移动光标。分辨率策略与真三3 相同：保持游戏自身渲染目标，拒绝高分辨率覆写。
@@ -108,6 +110,13 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.51
+
+- **真三3 小地图放大**。这一作的小地图是一张 104×128 的屏幕空间四边形（采样 410×440 的地图图集），补丁按这个指纹认出它，复制顶点并以右上角为锚点等比放大后提交副本，默认 **160%**。游戏自己的顶点缓冲不动，其他 HUD 不受影响，上下分屏时两个视口各自生效。
+- 新增运行中热键：**`Ctrl+Alt+F2` 放大 / `Ctrl+Alt+F3` 缩小**，每次 10%，范围 80–320%，按住可连调，结果自动写回 `minimap_scale`。
+- 新增配置项 `minimap_scale`、`minimap_hotkeys`、`minimap_surface_width` / `minimap_surface_height`（后两个是小地图纹理尺寸指纹，换语言版本时可调）。
+- 新增 D3D9 层的 2D 图元探针 `quad_probe`：把每帧提交的屏幕空间四边形（矩形、FVF、纹理、混合状态）和每张纹理的尺寸写进日志，用于定位 HUD 元素。
+
 ### 2.48
 - **战国无双2：修复十字键不生效**。这一作的十字键自 2.35 起只作为 POV 方向帽和四个独立按钮转发（`dpad_pov=1`、`dpad_as_left_stick=0`），但它的菜单既不认按钮也不认 POV —— 早先能用是因为 `SM2_Tweaks.ini` 里写的是 `dpad_as_left_stick=1`（把方向桥接进左摇杆轴），桥接一关就彻底没反应。诊断确认 `SW2.exe` 从 `USER32` 只导入了 `MessageBoxA`：既不调 `GetKeyboardState`/`GetAsyncKeyState`，也从不 `GetDeviceState`/`GetDeviceData` 它自己创建的那个键盘设备（日志里只有 `CreateDevice real keyboard=1`，没有任何键盘读取），所以「在游戏键盘设备上塞键」这条老路对它无效。
 - 新增 `dpad_arrow_keys=2` / `3`：`2` 用 `SendInput` 把方向键注入到与物理按键完全相同的一层（DirectInput 键盘设备和窗口消息循环都能看到）；`3` 只向游戏窗口投递 `WM_KEYDOWN`/`WM_KEYUP`，DirectInput 设备完全看不到。战国2 自动取 `2`，真三6 DX / 真三5 仍是 `1`。合成按键不会自动重复，所以按住方向时补丁把它切成一次次短按（新配置项 `dpad_arrow_pulse_ms`，默认 `40`；`dpad_arrow_gap_ms`，默认 `80`，合起来约每秒 8 格）。左摇杆完全不动，十字键仍可单独绑键。
@@ -144,7 +153,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.50**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.51**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -258,6 +267,13 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Changelog
 
+### 2.51
+
+- **SSM3: minimap magnification.** The minimap is a single 104x128 screen-space quad sampling a 410x440 map atlas. The patch recognises that fingerprint, copies its vertices, scales them around the quad's top-right corner and submits the copy, **160%** by default. The game's own vertex buffer is never touched, the rest of the HUD is unaffected, and split screen gets it in both viewports.
+- New in-game hotkeys: **`Ctrl+Alt+F2` grows / `Ctrl+Alt+F3` shrinks** the minimap in 10% steps, 80-320%, hold to repeat; the value is saved back to `minimap_scale`.
+- New options `minimap_scale`, `minimap_hotkeys`, `minimap_surface_width` / `minimap_surface_height` (the last two are the texture-size fingerprint, tunable for other language builds).
+- Adds a D3D9 2D-quad probe (`quad_probe`) that logs every screen-space quad (rect, FVF, texture, blend state) and every texture size, used to locate HUD elements.
+
 ### 2.48
 - **Sengoku Musou 2: fixed the dead D-pad.** Since 2.35 the D-pad is only forwarded as a POV hat plus four independent buttons (`dpad_pov=1`, `dpad_as_left_stick=0`), but this title's menus read neither. It used to work only because `SM2_Tweaks.ini` carried `dpad_as_left_stick=1` (bridging the directions into the left-stick axes); turning the bridge off left the D-pad with no path at all. Diagnostics confirmed `SW2.exe` imports nothing from `USER32` but `MessageBoxA`: it never calls `GetKeyboardState`/`GetAsyncKeyState`, and it never calls `GetDeviceState`/`GetDeviceData` on the keyboard device it creates (the log shows `CreateDevice real keyboard=1` and no keyboard read at all), so pressing keys on the game's own keyboard device cannot work for it.
 - New `dpad_arrow_keys=2` / `3`: `2` injects the arrows with `SendInput`, i.e. at exactly the layer a physical key press arrives at, so both the DirectInput keyboard device and the window message loop see them; `3` only posts `WM_KEYDOWN`/`WM_KEYUP` to the game window, leaving the DirectInput device untouched. Sengoku Musou 2 selects `2` automatically; SSM6 DX and DW6 keep `1`. A synthesised key never auto-repeats, so a held direction is chopped into short presses (`dpad_arrow_pulse_ms`, default `40`) separated by gaps (`dpad_arrow_gap_ms`, default `80`) — about eight menu steps per second. The left stick never moves and the D-pad keeps its own bindings.
@@ -294,4 +310,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.50**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.51**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.

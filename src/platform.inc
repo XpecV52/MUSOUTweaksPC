@@ -444,36 +444,248 @@ static void countSceneDraw(IDirect3DDevice9* d) {
  if(FAILED(d->GetFVF(&fvf)))return;
  if((fvf&D3DFVF_POSITION_MASK)!=D3DFVF_XYZRHW)InterlockedIncrement(&frameSceneDraws);
 }
+// --- screen-space quad probe (diagnostics) ---------------------------------
+// SSM3 draws its whole HUD, the minimap included, as screen-space quads. The
+// probe prints every distinct one with its rectangle, FVF, texture and blend
+// state, so a specific element can be identified from a single run instead of
+// by trial and error. quad_probe=1 turns it on; the list is capped so the log
+// stays readable.
+static int quadProbe=0;
+struct QuadProbeSig { int l,t,r,b;DWORD fvf;UINT num,count;void* tex;DWORD blend; };
+static QuadProbeSig quadProbeSigs[300];
+static int quadProbeSigCount=0;
+struct QuadProbeTex { void* tex;UINT w,h;DWORD fvf;int l,t,r,b;UINT num,count; };
+static QuadProbeTex quadProbeTexs[128];
+static int quadProbeTexCount=0;
+static UINT vertexCount(D3DPRIMITIVETYPE type,UINT count) {
+ switch(type){
+  case D3DPT_POINTLIST:return count;
+  case D3DPT_LINELIST:return count*2;
+  case D3DPT_LINESTRIP:return count+1;
+  case D3DPT_TRIANGLELIST:return count*3;
+  case D3DPT_TRIANGLESTRIP:return count+2;
+  case D3DPT_TRIANGLEFAN:return count+2;
+ }
+ return count;
+}
+static void quadProbeReport(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT num,UINT count,DWORD fvf,const float* verts,UINT stride,unsigned n) {
+ if(!quadProbe||!verts||n<2||n>32)return;
+ float left=1e9f,top=1e9f,right=-1e9f,bottom=-1e9f;
+ for(unsigned i=0;i<n;i++){
+  const float* v=(const float*)((const BYTE*)verts+(size_t)i*stride);
+  if(!_finite(v[0])||!_finite(v[1]))return;
+  left=std::min(left,v[0]);right=std::max(right,v[0]);
+  top=std::min(top,v[1]);bottom=std::max(bottom,v[1]);
+ }
+ const bool screenSpace=(fvf&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW;
+ // Register every texture the game draws with once, together with its surface
+ // size. A HUD element that is not submitted in screen space can still be
+ // identified from the texture it samples.
+ IDirect3DBaseTexture9* tex=nullptr;d->GetTexture(0,&tex);
+ if(tex&&quadProbeTexCount<128){
+  bool known=false;
+  for(int i=0;i<quadProbeTexCount;i++)if(quadProbeTexs[i].tex==tex){known=true;break;}
+  if(!known){
+   D3DSURFACE_DESC td={};UINT tw=0,th=0;
+   IDirect3DTexture9* tex9=nullptr;
+   if(SUCCEEDED(tex->QueryInterface(IID_IDirect3DTexture9,(void**)&tex9))&&tex9){
+    if(SUCCEEDED(tex9->GetLevelDesc(0,&td))){tw=td.Width;th=td.Height;}
+    tex9->Release();
+   }
+   quadProbeTexs[quadProbeTexCount++]={tex,tw,th,fvf,(int)left,(int)top,(int)right,(int)bottom,num,count};
+   logf("tex %p surface=%ux%u fvf=%08lx extent=%d,%d..%d,%d num=%u count=%u",
+    (void*)tex,tw,th,fvf,(int)left,(int)top,(int)right,(int)bottom,num,count);
+  }
+ }
+ if(!screenSpace){
+  // Model-space geometry cannot be placed on screen without its transform, so
+  // it is only counted, never measured.
+  if(tex)tex->Release();
+  return;
+ }
+ if(right<left||bottom<top||right-left>4096.0f||bottom-top>4096.0f){if(tex)tex->Release();return;}
+ // Text is submitted one glyph quad at a time; those would fill the whole list
+ // long before a HUD panel shows up. Only keep elements with real area.
+ if(right-left<24.0f||bottom-top<24.0f){if(tex)tex->Release();return;}
+ DWORD blend=FALSE;d->GetRenderState(D3DRS_ALPHABLENDENABLE,&blend);
+ QuadProbeSig sig={(int)left,(int)top,(int)right,(int)bottom,fvf,num,count,(void*)tex,blend};
+ if(tex)tex->Release();
+ for(int i=0;i<quadProbeSigCount;i++)if(!memcmp(&quadProbeSigs[i],&sig,sizeof(sig)))return;
+ const long long area=(long long)(sig.r-sig.l)*(long long)(sig.b-sig.t);
+ if(quadProbeSigCount<300){quadProbeSigs[quadProbeSigCount++]=sig;}
+ else{
+  // Keep the largest entries: text is submitted one growing quad per glyph, so
+  // without this a long dialogue line would crowd out every real panel.
+  int smallest=-1;long long smallestArea=0x7fffffffffffffffLL;
+  for(int i=0;i<quadProbeSigCount;i++){
+   const auto& o=quadProbeSigs[i];
+   const long long a=(long long)(o.r-o.l)*(long long)(o.b-o.t);
+   if(a<smallestArea){smallestArea=a;smallest=i;}
+  }
+  if(smallest<0||area<=smallestArea)return;
+  quadProbeSigs[smallest]=sig;
+ }
+ logf("quad type=%d num=%u count=%u fvf=%08lx extent=%d,%d..%d,%d size=%dx%d tex=%p blend=%lu",
+  (int)type,num,count,fvf,sig.l,sig.t,sig.r,sig.b,sig.r-sig.l,sig.b-sig.t,(void*)sig.tex,blend);
+}
+// Vertex-buffer variant: DrawPrimitive / DrawIndexedPrimitive keep their
+// vertices in a stream, so the first vertices have to be locked to be measured.
+static void quadProbeStream(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT num,UINT count,DWORD fvf,UINT base,UINT min) {
+ if(!quadProbe)return;
+ IDirect3DVertexBuffer9* buffer=nullptr;UINT offset=0,stride=0;
+ if(FAILED(d->GetStreamSource(0,&buffer,&offset,&stride))||!buffer)return;
+ if(stride>=16&&stride<=256){
+  UINT need=num?num:1;if(need>32)need=32;
+  const LONGLONG first=(LONGLONG)base+min;
+  if(first>=0&&(ULONGLONG)first*stride+offset+ (ULONGLONG)stride*need<=0xffffffffull){
+   void* data=nullptr;
+   if(SUCCEEDED(buffer->Lock(offset+(UINT)first*stride,(UINT)stride*need,&data,D3DLOCK_READONLY))&&data){
+    quadProbeReport(d,type,num,count,fvf,(const float*)data,stride,need);
+    buffer->Unlock();
+   }
+  }
+ }
+ buffer->Release();
+}
 static HRESULT WINAPI menuDrawPrimitive(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT start,UINT count) {
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,UINT))originalMethod(d,81);
  if(!fn)return D3DERR_INVALIDCALL;
  if(count)countSceneDraw(d);
+ if(quadProbe){
+  DWORD fvf=0;UINT n=vertexCount(type,count);
+  if(SUCCEEDED(d->GetFVF(&fvf))&&n>=2&&n<=64)quadProbeStream(d,type,n,0,fvf,start,0);
+ }
  return fn(d,type,start,count);
 }
 static HRESULT WINAPI menuDrawIndexedPrimitive(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,INT base,UINT min,UINT num,UINT start,UINT count) {
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,INT,UINT,UINT,UINT,UINT))originalMethod(d,82);
  if(!fn)return D3DERR_INVALIDCALL;
  if(count)countSceneDraw(d);
+ if(quadProbe){
+  DWORD fvf=0;
+  if(SUCCEEDED(d->GetFVF(&fvf))&&num>=2&&num<=64)quadProbeStream(d,type,num,count,fvf,(UINT)base,min);
+ }
  return fn(d,type,base,min,num,start,count);
 }
-static HRESULT WINAPI menuDrawPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT count,const void* data,UINT stride) {
- auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,const void*,UINT))originalMethod(d,83);
+// --- minimap magnification --------------------------------------------------
+// SSM3 draws its minimap as one 4-vertex TRIANGLESTRIP in screen space that
+// samples a 410x440 surface, anchored to the top-right corner of the viewport
+// (measured at 1132,64..1236,192 on a 1280x960 frame). Nothing else in the game
+// samples that surface as a single quad, so it is a safe fingerprint: scale the
+// quad around its own top-right corner and the map grows without touching the
+// rest of the HUD, in single player and split screen alike.
+static int minimapScale=100;
+static int minimapHotkeys=0;
+static int minimapSurfaceW=410,minimapSurfaceH=440;
+static bool minimapSurface(IDirect3DDevice9* d) {
+ IDirect3DBaseTexture9* tex=nullptr;
+ if(FAILED(d->GetTexture(0,&tex))||!tex)return false;
+ bool match=false;
+ D3DSURFACE_DESC td={};
+ IDirect3DTexture9* tex9=nullptr;
+ if(SUCCEEDED(tex->QueryInterface(IID_IDirect3DTexture9,(void**)&tex9))&&tex9){
+  if(SUCCEEDED(tex9->GetLevelDesc(0,&td)))
+   match=td.Width==(UINT)minimapSurfaceW&&td.Height==(UINT)minimapSurfaceH;
+  tex9->Release();
+ }
+ tex->Release();
+ return match;
+}
+static bool scaleMinimapQuad(float* v,unsigned n,UINT stride) {
+ float left=1e9f,top=1e9f,right=-1e9f,bottom=-1e9f;
+ for(unsigned i=0;i<n;i++){
+  const float* p=(const float*)((const BYTE*)v+(size_t)i*stride);
+  if(!_finite(p[0])||!_finite(p[1]))return false;
+  left=std::min(left,p[0]);right=std::max(right,p[0]);
+  top=std::min(top,p[1]);bottom=std::max(bottom,p[1]);
+ }
+ // Only the known minimap footprint; anything else that happens to share the
+ // surface keeps its original geometry.
+ const float w=right-left,h=bottom-top;
+ if(w<90.0f||w>120.0f||h<115.0f||h>140.0f)return false;
+ const float s=minimapScale/100.0f;
+ for(unsigned i=0;i<n;i++){
+  float* p=(float*)((BYTE*)v+(size_t)i*stride);
+  p[0]=right-(right-p[0])*s;
+  p[1]=top+(p[1]-top)*s;
+ }
+ static bool logged=false;
+ if(!logged){logged=true;logf("minimap scaled to %d%% from %dx%d at %d,%d..%d,%d",minimapScale,(int)w,(int)h,(int)left,(int)top,(int)right,(int)bottom);}
+ return true;
+}
+static HRESULT WINAPI menuDrawPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT count,const void* data,UINT stride) { auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,const void*,UINT))originalMethod(d,83);
  if(!fn)return D3DERR_INVALIDCALL;
  if(count)countSceneDraw(d);
+ if(quadProbe){
+  DWORD fvf=0;UINT n=vertexCount(type,count);
+  if(SUCCEEDED(d->GetFVF(&fvf))&&n>=2&&n<=64)quadProbeReport(d,type,n,0,fvf,(const float*)data,stride,n);
+ }
+ // Magnify the minimap in place: copy its vertices, scale them around the
+ // quad's top-right corner and submit the copy. The game's own buffer is never
+ // touched, so nothing else in the frame is affected.
+ if(minimapScale!=100&&data&&stride>=28&&stride<=256){
+  UINT n=vertexCount(type,count);
+  if(type==D3DPT_TRIANGLESTRIP&&n==4){
+   DWORD fvf=0;
+   if(SUCCEEDED(d->GetFVF(&fvf))&&(fvf&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW&&minimapSurface(d)){
+    BYTE local[4*256];
+    memcpy(local,data,(size_t)stride*4);
+    if(scaleMinimapQuad((float*)local,4,stride))return fn(d,type,count,local,stride);
+   }
+  }
+ }
  return fn(d,type,count,data,stride);
 }
 static HRESULT WINAPI menuDrawIndexedPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT min,UINT num,const void* indexData,D3DFORMAT indexFormat,const void* vertexData,UINT vertexStride) {
  auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,UINT,const void*,D3DFORMAT,const void*,UINT))originalMethod(d,84);
  if(!fn)return D3DERR_INVALIDCALL;
  if(num)countSceneDraw(d);
+ if(quadProbe){
+  DWORD fvf=0;
+  if(SUCCEEDED(d->GetFVF(&fvf))&&num>=2&&num<=64)quadProbeReport(d,type,num,0,fvf,(const float*)vertexData,vertexStride,num);
+ }
  return fn(d,type,min,num,indexData,indexFormat,vertexData,vertexStride);
 }
 static void installMenuDetectHooks(void** table) {
- if(!menuDetect||!table)return;
+ if((!menuDetect&&!quadProbe&&minimapScale==100&&!minimapHotkeys)||!table)return;
  hookTable(table,81,(void*)menuDrawPrimitive);
  hookTable(table,82,(void*)menuDrawIndexedPrimitive);
  hookTable(table,83,(void*)menuDrawPrimitiveUP);
  hookTable(table,84,(void*)menuDrawIndexedPrimitiveUP);
+}
+// Minimap size hotkeys: Ctrl+Alt+F2 grows the map, Ctrl+Alt+F3 shrinks it, in
+// 10% steps. The bounds keep it useful rather than silly: below 80% the icons
+// turn to mush, above 320% the map covers a third of the screen.
+static void pollMinimapHotkeys() {
+ if(!minimapHotkeys)return;
+ static unsigned previous=0;
+ static DWORD repeatAt=0;
+ static bool armed=false;
+ DWORD owner=0;GetWindowThreadProcessId(GetForegroundWindow(),&owner);
+ if(owner!=GetCurrentProcessId()){previous=0;armed=false;repeatAt=0;return;}
+ auto down=[](int vk){return (GetAsyncKeyState(vk)&0x8000)!=0;};
+ bool modifiers=down(VK_CONTROL)&&down(VK_MENU);
+ unsigned held=modifiers?((down(VK_F2)?1u:0u)|(down(VK_F3)?2u:0u)):0;
+ // A combination that is already held when the game gets focus must be
+ // released once before it starts stepping.
+ if(!armed){if(!held)armed=true;previous=held;return;}
+ if(!held){previous=0;repeatAt=0;return;}
+ unsigned pressed=held&~previous;
+ DWORD now=GetTickCount();
+ bool act=false;
+ if(pressed){act=true;repeatAt=now+350;}
+ else if(repeatAt&&(LONG)(now-repeatAt)>=0){act=true;repeatAt=now+150;}
+ previous=held;
+ if(!act)return;
+ int value=minimapScale;
+ if(held&1)value+=10;
+ else if(held&2)value-=10;
+ value=std::clamp(value,80,320);
+ if(value==minimapScale)return;
+ minimapScale=value;
+ char number[12];sprintf_s(number,"%d",value);
+ BOOL saved=WritePrivateProfileStringA("platform","minimap_scale",number,iniPath);
+ logf("minimap hotkey scale=%d saved=%d",value,saved);
 }
 static void pacePresentation() {
  if(fpsLimit<=0)return;
@@ -724,6 +936,7 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
  if(presentReentry){reportReentry("Present");return D3D_OK;}
  ReentryGuard guard(presentReentry);
  pollCameraHotkeys();
+ pollMinimapHotkeys();
  // The frame is complete: the next frame gets a fresh background slot.
  InterlockedExchange(&orochiBackgroundTaken,0);
  // Decide, from the geometry this frame submitted, whether the game is sitting
@@ -1305,6 +1518,18 @@ static void platformConfigure() {
  int menuDefault=!_stricmp(gameExeName,"SW2.exe")?1:0;
  menuDetect=std::clamp(opt("menu_inject_only",menuDefault),0,1);
  menuDrawThreshold=std::clamp(opt("menu_draw_threshold",300),0,4000);
+ // Diagnostic: list every distinct screen-space quad the game submits, so a HUD
+ // element (the SSM3 minimap) can be located from one run.
+ quadProbe=std::clamp(opt("quad_probe",0),0,1);
+ // Minimap magnification, in percent of the original size. Only SSM3 is
+ // recognised (its minimap is the single 4-vertex quad sampling a 410x440
+ // surface), every other title keeps 100 and never enters the code path.
+ minimapScale=std::clamp(opt("minimap_scale",!_stricmp(gameExeName,"ShinSangokumusou3.exe")?160:100),50,400);
+ minimapSurfaceW=std::clamp(opt("minimap_surface_width",410),1,4096);
+ minimapSurfaceH=std::clamp(opt("minimap_surface_height",440),1,4096);
+ // Ctrl+Alt+F2 / Ctrl+Alt+F3 resize the minimap in 10% steps and save the new
+ // value, so a title that never uses the minimap keeps the hotkeys off.
+ minimapHotkeys=std::clamp(opt("minimap_hotkeys",!_stricmp(gameExeName,"ShinSangokumusou3.exe")?1:0),0,1);
  if(windowMode){
   HMODULE user=GetModuleHandleA("user32.dll");auto dpi=(BOOL(WINAPI*)(HANDLE))GetProcAddress(user,"SetProcessDpiAwarenessContext");
   auto threadDpi=(HANDLE(WINAPI*)(HANDLE))GetProcAddress(user,"SetThreadDpiAwarenessContext");
