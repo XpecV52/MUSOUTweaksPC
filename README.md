@@ -175,7 +175,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 | Game | Tested version | Executable | Config | What the patch does |
 | --- | --- | --- | --- | --- |
-| Dynasty Warriors 4: Hyper (SSM3) | Aliyun/Traditional-Chinese fan patch `V0.1.1.0` (`2.0.0.0`) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | Gamepad adapter, D-pad, borderless window, IME isolation |
+| Dynasty Warriors 4: Hyper (SSM3) | Ali213/Traditional-Chinese fan patch `V0.1.1.0` (`2.0.0.0`) | `ShinSangokumusou3.exe` | `SSM3_Tweaks.ini` | Gamepad adapter, D-pad, borderless window, IME isolation |
 | Dynasty Warriors 5 Special (SSM4SP) | `V1.0.0.0` | `SM4_WIN.exe` / `SS4*.exe` | `SSM4_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless window |
 | Dynasty Warriors 6 (SSM5) | `V1.0.0.1` | `SM5_WIN.exe` | `SSM5_Tweaks.ini` | Gamepad adapter with a whitelisted device name, right-stick camera, D-pad, borderless fullscreen |
 | Dynasty Warriors 7 with Xtreme Legends DX (SSM6DX) | Steam `V1.0.0.0` | `SM6TC.exe` / `SM6EN.exe` / `SM6JP.exe` | `SSM6_Tweaks.ini` | Gamepad adapter, D-pad menu navigation, borderless scaling, background-scanner crash fix |
