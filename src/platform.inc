@@ -18,13 +18,15 @@ static int fpsLimit=0;
 // from one and the same input path, so a D-pad press that walks a menu cursor
 // also walks the character. There is no second channel to switch to, so the
 // only way to keep the two apart is to inject only while the game is drawing a
-// menu. A battle frame submits hundreds of real 3D draws (a position type other
-// than XYZRHW); a menu, loading or results frame submits almost none.
+// menu. A battle frame submits well over a thousand real 3D draws (a position
+// type other than XYZRHW); a menu, loading or results frame submits almost none.
+// Measured on Sengoku Musou 2: menus and loading 0-1, the in-battle pause menu
+// with its 3D map model 54, battles 1524-2018. The threshold sits in the gap.
 // 1 = count 3D draws per frame and publish menuSceneActive, 0 = off.
 static int menuDetect=0;
 static volatile LONG frameSceneDraws=0;
 static volatile LONG menuSceneDraws=0;
-static int menuDrawThreshold=16;
+static int menuDrawThreshold=300;
 static int menuHoldFrames=2,menuExitFrames=2;
 static int renderWidth=0,renderHeight=0;
 static int internalRenderWidth=0,internalRenderHeight=0;
@@ -1302,7 +1304,7 @@ static void platformConfigure() {
  // only injected while the frame contains no 3D scene.
  int menuDefault=!_stricmp(gameExeName,"SW2.exe")?1:0;
  menuDetect=std::clamp(opt("menu_inject_only",menuDefault),0,1);
- menuDrawThreshold=std::clamp(opt("menu_draw_threshold",16),0,4000);
+ menuDrawThreshold=std::clamp(opt("menu_draw_threshold",300),0,4000);
  if(windowMode){
   HMODULE user=GetModuleHandleA("user32.dll");auto dpi=(BOOL(WINAPI*)(HANDLE))GetProcAddress(user,"SetProcessDpiAwarenessContext");
   auto threadDpi=(HANDLE(WINAPI*)(HANDLE))GetProcAddress(user,"SetThreadDpiAwarenessContext");
