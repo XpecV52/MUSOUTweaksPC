@@ -1,4 +1,4 @@
-﻿# MUSOUTweaksPC 2.52 配置说明
+# MUSOUTweaksPC 2.53-rc1 配置说明
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
 
@@ -23,6 +23,24 @@
 配置项使用 `名称=数值` 格式。`1` 表示开启，`0` 表示关闭。缺少配置项时会采用本文列出的默认值；超出允许范围的数值会自动限制到有效范围。
 
 ## 手柄与按键
+
+2.53-rc1 新增 `[input]` 节，适用于全部游戏配置：
+
+```ini
+[input]
+controller_takeover=1
+player2_xinput_slot=-1
+```
+
+`controller_takeover=1` 在识别为菜单的场景中，由已连接且通过松键保护的1P手柄 B/A 接管 Enter/Esc，屏蔽原键盘确认/返回和原生 A/B，避免一次按键走两条输入路径。无1P手柄时仍保留键盘。`0` 关闭接管，恢复键盘优先和旧的 `pad_enter_*` 设置。该开关启用时，`[padfix] xinput_slot=-1` 按固定槽位0处理；1P手柄在其他槽位时请明确指定 `xinput_slot=1/2/3`。断开1P不会把2P提升为菜单控制器。
+
+`player2_xinput_slot=-1` 自动选择1P以外的在线 XInput 手柄，也可指定0–3。只有检测到第二个手柄才枚举2P虚拟设备。2P只在战斗场景输出游戏控制，不生成共享键盘按键。当前2P支持XInput；原生DS4读取仍限1P。
+
+菜单判定沿用每帧3D绘制计数，并在 `[platform] menu_draw_threshold` 配置阈值（默认300）。战国2有既有校准证据，其他作品的复杂3D菜单尚需实机校准；**不能把这个候选实现视为所有菜单均已验证**。1P使用手柄时请保留 `foreground_only=1`，以免向其他应用注入按键。
+
+真三5新增 `[padfix] trigger_axes=0`：保持右摇杆轴和LT/RT独立按钮，令重复的Z/Rz扳机轴保持松开，避免召马与游戏原生地图切换同时触发。其他作品默认1，旧版如果绑定的是扳机轴，需要在游戏中重新绑定到LT/RT按钮。
+
+虚拟手柄新增DirectInput恒力、斜坡和周期力到XInput双马达的强度转换，支持时长、增益、停止、暂停、断连与失焦清理。此实现将力效果转换成振动强度，不重现方向盘的力方向或完整波形。原生DS4尚无马达输出路径；需要震动时应使用DS4Windows/Steam Input提供XInput。真三7保留原生XInput震动调用，并增加后台停止保护；战斗触发和物理马达仍待实测。
 
 这些项目位于 `[padfix]`。
 
@@ -52,9 +70,9 @@
 | `ds4_right_x` | `2` | 原生 DS4 右摇杆 X 轴索引，范围 `0`–`5`。索引依次为 X、Y、Z、Rx、Ry、Rz。|
 | `ds4_right_y` | `5` | 原生 DS4 右摇杆 Y 轴索引，范围 `0`–`5`。标准 DS4 默认使用 Z/Rz（`2`/`5`）。仅当特定原生 DS4 驱动的轴顺序不同时修改。|
 
-十字键始终作为独立 DirectInput 按钮提供：上/下/左/右对应 Button 13/14/15/16，并可另行暴露为 POV。`dpad_as_left_stick=0` 时它们不会进入左摇杆轴，因此不会驱动战斗移动。真三6 DX 的菜单不认按钮与 POV，改为用 `dpad_arrow_keys` 在游戏的键盘设备上按下方向键来移动光标；战国2 的菜单同样不认按钮与 POV，只认 DirectInput 键盘，而它的菜单光标与角色移动共用同一路键盘输入，所以用 `dpad_arrow_keys=2`（`SendInput`）送方向键，并由 `menu_inject_only=1` 限定只在菜单帧注入——战斗里十字键不会带动角色。
+十字键在键盘方向注入生效时暂时屏蔽重复的按钮/POV输出，其余场景作为独立 DirectInput 按钮提供：上/下/左/右对应 Button 13/14/15/16，并可另行暴露为 POV。`dpad_as_left_stick=0` 时它们不会进入左摇杆轴，因此不会驱动战斗移动。真三6 DX 的菜单不认按钮与 POV，改为用 `dpad_arrow_keys` 在游戏的键盘设备上按下方向键来移动光标；战国2 的菜单同样不认按钮与 POV，只认 DirectInput 键盘，而它的菜单光标与角色移动共用同一路键盘输入，所以用 `dpad_arrow_keys=2`（`SendInput`）送方向键，并由 `menu_inject_only=1` 限定只在菜单帧注入——战斗里十字键不会带动角色。
 
-当前适配只向游戏呈现一个虚拟手柄；双人双手柄、DualSense、DS4 仿制品以及其他 DirectInput 设备未适配。使用 DS4Windows 等工具将 DS4 转成 Xbox/XInput 时，应选择 `backend=1` 或保持自动模式，而不是 `backend=2`。
+当前可呈现两个独立XInput来源的虚拟手柄；原生DS4限1P，DualSense、DS4 仿制品以及其他 DirectInput 设备未适配。使用 DS4Windows 等工具将 DS4 转成 Xbox/XInput 时，应选择 `backend=1` 或保持自动模式，而不是 `backend=2`。
 
 ## 窗口、后台输入和启动兼容
 

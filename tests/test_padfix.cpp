@@ -10,7 +10,7 @@ static BOOL CALLBACK objectCount(const DIDEVICEOBJECTINSTANCEA*,void* p){++*(int
 static void resetGate(){armed=false;neutralPending=false;wasForeground=false;fakeState={};sample();sample();}
 static DIJOYSTATE2 read(Device& d){DIJOYSTATE2 s;memset(&s,0xcc,sizeof(s));check(d.GetDeviceState(sizeof(s),&s)==DI_OK,"read state");return s;}
 int main(){
- logging=false;foregroundOnly=0;getXState=fakeX;neutralMs=0;
+ logging=false;foregroundOnly=0;getXState=fakeX;neutralMs=0;controllerTakeover=0;
  NativeAction menuActions[16]={},playerActions[21]={};
  const int menuArrows[]={DIK_UP,DIK_DOWN,DIK_LEFT,DIK_RIGHT};
  for(int i=0;i<16;i++){menuActions[i].flags=1;menuActions[i].binding[0].device=8;menuActions[i].binding[1].device=10;}

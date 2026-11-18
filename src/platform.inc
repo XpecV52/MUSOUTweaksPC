@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <cwchar>
 #include <cctype>
+#include <array>
 #ifndef PADFIX_PLATFORM_ONLY
 extern "C" void sw2ResolutionInitialize(void);
 #endif
@@ -1019,6 +1020,7 @@ static HRESULT WINAPI platformCreateDepthStencilSurface(IDirect3DDevice9* d,UINT
 static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,const RECT* destination,HWND overrideWindow,const RGNDATA* dirty) {
  if(presentReentry){reportReentry("Present");return D3D_OK;}
  ReentryGuard guard(presentReentry);
+ startControllerWorker();
  pollCameraHotkeys();
  pollMinimapHotkeys();
  // The minimap rectangles are rediscovered every frame by the base-map quads;
@@ -1157,7 +1159,7 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  if(SUCCEEDED(hr)&&*out){
   // The minimap hotkeys are polled from Present, so that hook is needed even
   // when no other feature is active.
-  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture||minimapHotkeys)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d minimap_hotkeys=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture,minimapHotkeys);}
+  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture||minimapHotkeys||menuDetect)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d minimap_hotkeys=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture,minimapHotkeys);}
   if(ours)installMenuDetectHooks(*(void***)*out);
   if(ours){
    UINT logicalW=requestedW,logicalH=requestedH;
@@ -1296,7 +1298,7 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
  device->Release();DestroyWindow(probe);api->Release();return 0;
 }
 static bool attachLateD3DPresentHook() {
- if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0&&!minimapHotkeys))return false;
+ if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0&&!minimapHotkeys&&!menuDetect))return false;
  // DW3/DW4's Direct3DCreate9 entry point is imported and hooked before the
  // games create their devices. The extra probe/heap scan is redundant here;
  // it had started immediately before the recorded DW4 startup stack overflow.
@@ -1611,9 +1613,9 @@ static void platformConfigure() {
  // Menu-only D-pad arrow injection. Sengoku Musou 2 takes both its menu cursor
  // and its character movement from the same keyboard path, so the arrows are
  // only injected while the frame contains no 3D scene.
- int menuDefault=!_stricmp(gameExeName,"SW2.exe")?1:0;
- menuDetect=std::clamp(opt("menu_inject_only",menuDefault),0,1);
- menuDrawThreshold=std::clamp(opt("menu_draw_threshold",300),0,4000);
+ int menuDefault=(int)GetPrivateProfileIntA("padfix","menu_inject_only",!_stricmp(gameExeName,"SW2.exe")?1:0,iniPath);
+ menuDetect=controllerTakeover||std::clamp(opt("menu_inject_only",menuDefault),0,1);
+ menuDrawThreshold=std::clamp(opt("menu_draw_threshold",(int)GetPrivateProfileIntA("padfix","menu_draw_threshold",300,iniPath)),0,4000);
  // Diagnostic: list every distinct screen-space quad the game submits, so a HUD
  // element (the SSM3 minimap) can be located from one run.
  quadProbe=std::clamp(opt("quad_probe",0),0,1);
@@ -1679,7 +1681,7 @@ static void platformConfigure() {
  logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_aspect_mode=%d scale_filter=%u single_present=%d IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleAspectMode,scaleFilter,singlePresentMode,imeIsolation,comCompatibility,quickClose,fpsLimit);
  attachExistingMainWindow();
  startMainWindowWatch();
- if(windowMode||fpsLimit>0||minimapHotkeys)attachLateD3DPresentHook();
+ if(windowMode||fpsLimit>0||minimapHotkeys||menuDetect)attachLateD3DPresentHook();
 }
 // The inherited GS sprite format stores Y in unsigned 12.4 fixed point
 // with a 2048-pixel bias. A 2160-pixel bottom edge wraps to -1936.
@@ -1760,7 +1762,24 @@ static void logKeyMessage(UINT message,WPARAM w,LPARAM l) {
  keyMsgSeen++;
  logf("window key message %u wparam=%02x lparam=%08lx (#%d)",message,(unsigned)w,(unsigned long)l,keyMsgSeen);
 }
+static void constrainBorderlessPosition(WINDOWPOS* pos){
+ if(!pos)return;
+ // Preserve activation and Z-order requests. Forcing HWND_NOTOPMOST on every
+ // activation inserts the window behind ordinary apps, so a taskbar click can
+ // never bring the game back above them.
+ if(!(pos->flags&SWP_NOZORDER)&&pos->hwndInsertAfter==HWND_TOPMOST)pos->hwndInsertAfter=HWND_TOP;
+ if(!IsIconic(pos->hwnd)){
+  pos->x=monitorBounds.left;pos->y=monitorBounds.top;
+  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
+  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE);
+ }
+}
+static bool blockKeyboardMenuMessage(UINT message,WPARAM key){
+ if(!controllerMenuActive()||GetMessageExtraInfo()==(LPARAM)0x4D55534F)return false;
+ return (key==VK_RETURN||key==VK_ESCAPE)&&(message==WM_KEYDOWN||message==WM_KEYUP||message==WM_CHAR||message==WM_SYSKEYDOWN||message==WM_SYSKEYUP||message==WM_SYSCHAR);
+}
 static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM l) {
+ if(blockKeyboardMenuMessage(message,w))return 0;
  logKeyMessage(message,w,l);
  if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
   STYLESTRUCT* style=(STYLESTRUCT*)l;
@@ -1768,9 +1787,7 @@ static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM 
   else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
  }
  if(windowMode&&h==gameWindow&&message==WM_WINDOWPOSCHANGING&&l){
-  WINDOWPOS* pos=(WINDOWPOS*)l;pos->x=monitorBounds.left;pos->y=monitorBounds.top;
-  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
-  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);pos->hwndInsertAfter=HWND_NOTOPMOST;
+  constrainBorderlessPosition((WINDOWPOS*)l);
  }
  if(message==WM_CLOSE&&quickClose){logf("WM_CLOSE: normal destroy without confirmation");releaseAllScaleSurfaces();releaseAllNativeOutputChains();if(IsWindow(h))DestroyWindow(h);return 0;}
  if(message==WM_DESTROY)releaseAllNativeOutputChains();
@@ -1779,6 +1796,7 @@ static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM 
  return CallWindowProcA(gameWindowProc,h,message,w,l);
 }
 static LRESULT CALLBACK platformWindowProcW(HWND h,UINT message,WPARAM w,LPARAM l) {
+ if(blockKeyboardMenuMessage(message,w))return 0;
  logKeyMessage(message,w,l);
  if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
   STYLESTRUCT* style=(STYLESTRUCT*)l;
@@ -1786,9 +1804,7 @@ static LRESULT CALLBACK platformWindowProcW(HWND h,UINT message,WPARAM w,LPARAM 
   else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
  }
  if(windowMode&&h==gameWindow&&message==WM_WINDOWPOSCHANGING&&l){
-  WINDOWPOS* pos=(WINDOWPOS*)l;pos->x=monitorBounds.left;pos->y=monitorBounds.top;
-  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
-  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);pos->hwndInsertAfter=HWND_NOTOPMOST;
+  constrainBorderlessPosition((WINDOWPOS*)l);
  }
  if(message==WM_CLOSE&&quickClose){logf("WM_CLOSE: normal destroy without confirmation");releaseAllScaleSurfaces();releaseAllNativeOutputChains();if(IsWindow(h))DestroyWindow(h);return 0;}
  if(message==WM_DESTROY)releaseAllNativeOutputChains();
@@ -1970,9 +1986,9 @@ static HWND WINAPI platformCreateWindowW(DWORD ex,LPCWSTR cls,LPCWSTR title,DWOR
 }
 static BOOL WINAPI platformSetWindowPos(HWND h,HWND after,int x,int y,int width,int height,UINT flags) {
  if(h==gameWindow){
-  if(after==HWND_TOPMOST)after=HWND_NOTOPMOST;
+  if(after==HWND_TOPMOST)after=HWND_TOP;
   if(windowMode){x=monitorBounds.left;y=monitorBounds.top;width=monitorBounds.right-x;height=monitorBounds.bottom-y;
-   flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);after=HWND_NOTOPMOST;}
+   flags&=~(SWP_NOMOVE|SWP_NOSIZE);}
  }
  return realSetWindowPos(h,after,x,y,width,height,flags);
 }
@@ -2036,6 +2052,13 @@ static HRESULT WINAPI platformCoInitializeLegacy(LPVOID reserved) {
 }
 static FARPROC WINAPI platformGetProcAddress(HMODULE module,LPCSTR name) {
  if(!realGetProcAddress)return nullptr;
+ if((ULONG_PTR)name>65535&&!_stricmp(gameExeName,"Launch.exe")){
+  char path[MAX_PATH]={};GetModuleFileNameA(module,path,MAX_PATH);const char* file=strrchr(path,'\\');file=file?file+1:path;
+  if(!_strnicmp(file,"xinput",6)){
+   if(!strcmp(name,"XInputGetState")){gameGetXState=(decltype(gameGetXState))realGetProcAddress(module,name);return (FARPROC)nativeGetState;}
+   if(!strcmp(name,"XInputSetState")){gameSetXState=(decltype(gameSetXState))realGetProcAddress(module,name);return (FARPROC)nativeSetState;}
+  }
+ }
  if((ULONG_PTR)name>65535&&module==GetModuleHandleA("d3d9.dll")&&!_stricmp(name,"Direct3DCreate9")){
   realCreateD3D=(decltype(realCreateD3D))realGetProcAddress(module,name);
   logf("dynamic API hook: d3d9!Direct3DCreate9");return (FARPROC)platformCreateD3D;
@@ -2086,7 +2109,12 @@ static void installDeferredGetProcHook() {
 }
 [[maybe_unused]] static void installEarlyHooks() {
  char exe[MAX_PATH]={};GetModuleFileNameA(nullptr,exe,MAX_PATH);const char* name=strrchr(exe,'\\');name=name?name+1:exe;
+ strcpy_s(gameExeName,name);
  deferGetProcHook=!_stricmp(name,"SW2.exe");
+ if(!_stricmp(name,"Launch.exe"))for(const char* dll:{"xinput1_4.dll","xinput1_3.dll","xinput9_1_0.dll"}){
+  patchImport(dll,"XInputGetState",(void*)nativeGetState,(void**)&gameGetXState);
+  patchImport(dll,"XInputSetState",(void*)nativeSetState,(void**)&gameSetXState);
+ }
  struct Entry{const char* dll;const char* name;void* hook;void** original;};
  Entry hooks[]={
   {"user32.dll","CreateWindowExA",(void*)platformCreateWindow,(void**)&realCreateWindow},
