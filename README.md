@@ -27,7 +27,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 **分辨率保持游戏自身 1280×960**，只由无边框窗口放大，任何高分辨率覆写都会被拒绝——这一作的引擎画布和 UI 是按固定尺寸写死的，仅改 D3D 后备缓冲区会裁切画面。
 
-**小地图放大**：这一作的小地图只有 104×128 像素，在放大到桌面尺寸的窗口里显得很小。补丁在 D3D9 里认出「采样 410×440 地图图集、4 顶点 `TRIANGLESTRIP`、绘制区域约 104×128」的那一次绘制，复制它的顶点、以四边形右上角为锚点等比放大后提交副本，默认 **160%**（`minimap_scale`）。游戏自己的顶点缓冲不改，同一帧其他 HUD 不受影响，上下分屏时每个视口各自贴自己的右上角。运行中可用 **`Ctrl+Alt+F2` 放大、`Ctrl+Alt+F3` 缩小**（每次 10%，范围 80–320%，按住可连调），新值立即写回 ini。
+**小地图放大**：这一作的小地图只有 104×128 像素（分屏时每个视口各一块），在放大到桌面尺寸的窗口里显得很小。补丁在 D3D9 里把**每帧采样 410×440 地图图集的最大那个屏幕空间四边形**认作底图——不按尺寸写死，单人与分屏画法尺寸不同都能认；复制它的顶点、以四边形右上角为锚点等比放大后提交副本，默认 **160%**（`minimap_scale`）。地图上的标记点（单位点、玩家箭头、据点图标）是各自单独提交的小四边形，补丁把它们匹配到所在视口的地图矩形、用同一套变换一起放大，底图与标记点始终同步。游戏自己的顶点缓冲不改，同一帧其他 HUD 不受影响。运行中可用 **`Ctrl+Alt+F2` 放大、`Ctrl+Alt+F3` 缩小**（每次 10%，范围 80–320%，按住可连调），新值立即写回 ini。
 
 ### 真三国无双4 Special(SSM4SP_Shin Sangokumusou4 Special)
 
@@ -110,6 +110,13 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.52
+
+- **真三3 小地图：标记点跟随放大**。地图底图是一次绘制，而上面的单位点、玩家箭头、据点图标是各自单独提交的小四边形，之前只放大了底图，标记点全留在原来的小区域里。现在底图定下矩形，任何落在该矩形内的 2D 图元都按同一套变换（锚点仍是右上角）一起放大；分屏时两个视口各自的矩形都会记录，标记点按包含关系匹配到对应视口，不会串到另一个视口。
+- **真三3 小地图：单人模式不放大**。上一版用「宽 90–120、高 115–140」的尺寸窗口认定底图，而 104×128 只是**分屏**时每个视口的地图尺寸；单人模式画得更大，直接被窗口排除，于是整段逻辑不生效。现在改为按地图图集纹理识别、取每帧面积最大的那个四边形，不再依赖任何尺寸常量。
+- **真三3 小地图：热键此前完全没生效**。热键在 `Present` 里轮询，而这一作四个原有挂载条件（原生分辨率、锁帧、视角调整、截帧）全都不满足，`Present` 从未被接管，轮询一次都没跑过。现在只要 `minimap_hotkeys=1` 就会挂上 `Present`（含晚挂钩路径）。
+- 新增诊断日志：`minimap base 宽x高 at ... scaled to N%` 与 `minimap candidate rejected 宽x高 ... surface=纹宽x纹高`，换作或换语言版本时可以直接从日志读出地图的实际尺寸与纹理尺寸。
+
 ### 2.51
 
 - **真三3 小地图放大**。这一作的小地图是一张 104×128 的屏幕空间四边形（采样 410×440 的地图图集），补丁按这个指纹认出它，复制顶点并以右上角为锚点等比放大后提交副本，默认 **160%**。游戏自己的顶点缓冲不动，其他 HUD 不受影响，上下分屏时两个视口各自生效。
@@ -153,7 +160,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.51**，对外发布版本 **V1.0.3**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.52**，对外发布版本 **V1.0.4**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -267,9 +274,16 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Changelog
 
+### 2.52
+
+- **SSM3 minimap: markers now scale with the map.** The base map is one draw, while the unit blips, the player arrow and the camp icons are each submitted as their own little quad; only the base was scaled before, so every marker stayed behind in the old, smaller footprint. The base quad now fixes a rectangle and any 2D primitive inside it is moved by the same transform (same top-right anchor). Split screen records one rectangle per viewport and matches each marker to the one that contains it, so the two views never cross.
+- **SSM3 minimap: single player was not magnified at all.** The previous build identified the base map with a size window of width 90-120 and height 115-140, but 104x128 is the **split-screen** size; single player draws the map larger, fell outside the window, and the whole path went dead. Detection is now by map-atlas texture, taking the largest such quad of the frame, with no size constant anywhere.
+- **SSM3 minimap: the hotkeys had never fired.** They are polled from `Present`, and this port satisfied none of the four existing hook conditions (native resolution, frame limit, camera tweak, frame capture), so `Present` was never taken over and the poll never ran once. `minimap_hotkeys=1` now installs the `Present` hook on its own, late-hook path included.
+- New diagnostics: `minimap base WxH at ... scaled to N%` and `minimap candidate rejected WxH ... surface=texWxtexH`, so the real map size and atlas size of another port or language build can be read straight from the log.
+
 ### 2.51
 
-- **SSM3: minimap magnification.** The minimap is a single 104x128 screen-space quad sampling a 410x440 map atlas. The patch recognises that fingerprint, copies its vertices, scales them around the quad's top-right corner and submits the copy, **160%** by default. The game's own vertex buffer is never touched, the rest of the HUD is unaffected, and split screen gets it in both viewports.
+- **SSM3: minimap magnification.** The minimap is a 104x128 screen-space quad per viewport sampling a 410x440 map atlas. The patch takes **the largest screen-space quad of each frame that samples that atlas** as the base map — no size constant, so single player (drawn larger) and split screen (104x128 per viewport) both work — copies its vertices, scales them around the quad's top-right corner and submits the copy, **160%** by default. The markers on top of the map (unit blips, the player arrow, camp icons) are separate little quads: they are matched to the rectangle of their own viewport and moved by the same transform, so base map and markers always stay in sync. The game's own vertex buffer is never touched and the rest of the HUD is unaffected.
 - New in-game hotkeys: **`Ctrl+Alt+F2` grows / `Ctrl+Alt+F3` shrinks** the minimap in 10% steps, 80-320%, hold to repeat; the value is saved back to `minimap_scale`.
 - New options `minimap_scale`, `minimap_hotkeys`, `minimap_surface_width` / `minimap_surface_height` (the last two are the texture-size fingerprint, tunable for other language builds).
 - Adds a D3D9 2D-quad probe (`quad_probe`) that logs every screen-space quad (rect, FVF, texture, blend state) and every texture size, used to locate HUD elements.
@@ -310,4 +324,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.51**; public release: **V1.0.3**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.52**; public release: **V1.0.4**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.

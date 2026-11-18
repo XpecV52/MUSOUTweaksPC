@@ -568,12 +568,12 @@ static HRESULT WINAPI menuDrawIndexedPrimitive(IDirect3DDevice9* d,D3DPRIMITIVET
  return fn(d,type,base,min,num,start,count);
 }
 // --- minimap magnification --------------------------------------------------
-// SSM3 draws its minimap as one 4-vertex TRIANGLESTRIP in screen space that
-// samples a 410x440 surface, anchored to the top-right corner of the viewport
-// (measured at 1132,64..1236,192 on a 1280x960 frame). Nothing else in the game
-// samples that surface as a single quad, so it is a safe fingerprint: scale the
-// quad around its own top-right corner and the map grows without touching the
-// rest of the HUD, in single player and split screen alike.
+// SSM3 draws its minimap as a screen-space quad that samples a 410x440 surface,
+// anchored to the top-right corner of the viewport (104x128 at 1132,64..1236,192
+// on a 1280x960 frame in split screen, larger in single player). Nothing else in
+// the game samples that surface as one big quad, so it is a safe fingerprint:
+// scale the quad around its top-right corner and the map grows without touching
+// the rest of the HUD.
 static int minimapScale=100;
 static int minimapHotkeys=0;
 static int minimapSurfaceW=410,minimapSurfaceH=440;
@@ -591,7 +591,43 @@ static bool minimapSurface(IDirect3DDevice9* d) {
  tex->Release();
  return match;
 }
-static bool scaleMinimapQuad(float* v,unsigned n,UINT stride) {
+// The map itself is one quad, but every marker on top of it (unit blips, the
+// player arrow, the camp icons) is submitted as its own little quad in the same
+// screen-space rectangle. Scaling only the base quad leaves all of those behind
+// in the old, smaller footprint. So: the base quad fixes the rectangle, and any
+// other quad that lies inside it is moved by the same transform, anchored to the
+// same top-right corner.
+//
+// The base quad is identified by the map surface it samples, never by a size
+// constant: single player and split screen draw the same surface at different
+// sizes (104x128 per viewport in split screen, larger in single player), so a
+// fixed size window silently stops matching as soon as the layout changes. The
+// base is simply the largest quad of a frame that samples that surface.
+static const int minimapMaxRects=4;
+static float minimapRectsNow[minimapMaxRects][4];
+static int minimapRectsNowCount=0;
+static float minimapRectsPrev[minimapMaxRects][4];
+static int minimapRectsPrevCount=0;
+static float minimapFrameBaseArea=0.0f;
+// How many marker quads followed the base map in the current frame; logged now
+// and then so a missing marker is easy to tell apart from a misplaced one.
+static volatile LONG minimapMarkerDraws=0;
+// Large screen-space quads that were rejected as the base map, with the surface
+// they sample. Rate limited; this is the diagnostic for "the map is not being
+// recognised in this layout".
+struct MinimapReject { int w,h,texW,texH; };
+static MinimapReject minimapRejects[16];
+static int minimapRejectCount=0;
+static void minimapScaleByRect(float* v,unsigned n,UINT stride,const float* r,float s) {
+ for(unsigned i=0;i<n;i++){
+  float* p=(float*)((BYTE*)v+(size_t)i*stride);
+  p[0]=r[2]-(r[2]-p[0])*s;
+  p[1]=r[1]+(p[1]-r[1])*s;
+ }
+}
+static bool scaleMinimapQuad(IDirect3DDevice9* d,float* v,unsigned n,UINT stride,DWORD fvf) {
+ if(minimapScale==100)return false;
+ if((fvf&D3DFVF_POSITION_MASK)!=D3DFVF_XYZRHW)return false;
  float left=1e9f,top=1e9f,right=-1e9f,bottom=-1e9f;
  for(unsigned i=0;i<n;i++){
   const float* p=(const float*)((const BYTE*)v+(size_t)i*stride);
@@ -599,19 +635,65 @@ static bool scaleMinimapQuad(float* v,unsigned n,UINT stride) {
   left=std::min(left,p[0]);right=std::max(right,p[0]);
   top=std::min(top,p[1]);bottom=std::max(bottom,p[1]);
  }
- // Only the known minimap footprint; anything else that happens to share the
- // surface keeps its original geometry.
- const float w=right-left,h=bottom-top;
- if(w<90.0f||w>120.0f||h<115.0f||h>140.0f)return false;
  const float s=minimapScale/100.0f;
- for(unsigned i=0;i<n;i++){
-  float* p=(float*)((BYTE*)v+(size_t)i*stride);
-  p[0]=right-(right-p[0])*s;
-  p[1]=top+(p[1]-top)*s;
+ const float w=right-left,h=bottom-top;
+ // The base map: the biggest quad of this frame that samples the map surface.
+ if(w>=24.0f&&h>=24.0f&&w<=700.0f&&h<=700.0f){
+  if(minimapSurface(d)){
+   const float area=w*h;
+   if(area>=minimapFrameBaseArea){
+    minimapFrameBaseArea=area;
+    float rect[4]={left,top,right,bottom};
+    if(minimapRectsNowCount<minimapMaxRects){
+     memcpy(minimapRectsNow[minimapRectsNowCount],rect,sizeof(rect));
+     minimapRectsNowCount++;
+    }else memcpy(minimapRectsNow[minimapMaxRects-1],rect,sizeof(rect));
+    minimapScaleByRect(v,n,stride,rect,s);
+    static int loggedW=0,loggedH=0;
+    if((int)w!=loggedW||(int)h!=loggedH){
+     loggedW=(int)w;loggedH=(int)h;
+     logf("minimap base %dx%d at %d,%d..%d,%d scaled to %d%%",(int)w,(int)h,(int)left,(int)top,(int)right,(int)bottom,minimapScale);
+    }
+    return true;
+   }
+  }else if(w>=80.0f&&h>=80.0f){
+   // Not the map surface. Remember it so a layout that uses a different atlas
+   // for the map can be diagnosed from the log instead of guessed at.
+   D3DSURFACE_DESC td={};int texW=0,texH=0;
+   IDirect3DBaseTexture9* tex=nullptr;
+   if(SUCCEEDED(d->GetTexture(0,&tex))&&tex){
+    IDirect3DTexture9* tex9=nullptr;
+    if(SUCCEEDED(tex->QueryInterface(IID_IDirect3DTexture9,(void**)&tex9))&&tex9){
+     if(SUCCEEDED(tex9->GetLevelDesc(0,&td))){texW=(int)td.Width;texH=(int)td.Height;}
+     tex9->Release();
+    }
+    tex->Release();
+   }
+   bool known=false;
+   for(int i=0;i<minimapRejectCount;i++)
+    if(minimapRejects[i].w==(int)w&&minimapRejects[i].h==(int)h&&minimapRejects[i].texW==texW&&minimapRejects[i].texH==texH){known=true;break;}
+   if(!known&&minimapRejectCount<16){
+    minimapRejects[minimapRejectCount++]={ (int)w,(int)h,texW,texH };
+    logf("minimap candidate rejected %dx%d at %d,%d surface=%dx%d",(int)w,(int)h,(int)left,(int)top,texW,texH);
+   }
+  }
  }
- static bool logged=false;
- if(!logged){logged=true;logf("minimap scaled to %d%% from %dx%d at %d,%d..%d,%d",minimapScale,(int)w,(int)h,(int)left,(int)top,(int)right,(int)bottom);}
- return true;
+ // A marker drawn on top of the map: it lives inside one of the base rectangles
+ // and has to travel with that base's top-right anchor, not its own. The
+ // rectangles of the previous frame are consulted as well, because a marker can
+ // be submitted before its base map in the very first frame.
+ for(int pass=0;pass<2;pass++){
+  const float (*list)[4]=pass?minimapRectsPrev:minimapRectsNow;
+  const int count=pass?minimapRectsPrevCount:minimapRectsNowCount;
+  for(int i=0;i<count;i++){
+   const float* r=list[i];
+   if(left<r[0]-8.0f||top<r[1]-8.0f||right>r[2]+8.0f||bottom>r[3]+8.0f)continue;
+   InterlockedIncrement(&minimapMarkerDraws);
+   minimapScaleByRect(v,n,stride,r,s);
+   return true;
+  }
+ }
+ return false;
 }
 static HRESULT WINAPI menuDrawPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE type,UINT count,const void* data,UINT stride) { auto fn=(HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,const void*,UINT))originalMethod(d,83);
  if(!fn)return D3DERR_INVALIDCALL;
@@ -625,12 +707,12 @@ static HRESULT WINAPI menuDrawPrimitiveUP(IDirect3DDevice9* d,D3DPRIMITIVETYPE t
  // touched, so nothing else in the frame is affected.
  if(minimapScale!=100&&data&&stride>=28&&stride<=256){
   UINT n=vertexCount(type,count);
-  if(type==D3DPT_TRIANGLESTRIP&&n==4){
+  if(n>=3&&n<=8){
    DWORD fvf=0;
-   if(SUCCEEDED(d->GetFVF(&fvf))&&(fvf&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW&&minimapSurface(d)){
-    BYTE local[4*256];
-    memcpy(local,data,(size_t)stride*4);
-    if(scaleMinimapQuad((float*)local,4,stride))return fn(d,type,count,local,stride);
+   if(SUCCEEDED(d->GetFVF(&fvf))){
+    BYTE local[8*256];
+    memcpy(local,data,(size_t)stride*n);
+    if(scaleMinimapQuad(d,(float*)local,n,stride,fvf))return fn(d,type,count,local,stride);
    }
   }
  }
@@ -669,6 +751,8 @@ static void pollMinimapHotkeys() {
  // A combination that is already held when the game gets focus must be
  // released once before it starts stepping.
  if(!armed){if(!held)armed=true;previous=held;return;}
+ static bool armedLogged=false;
+ if(!armedLogged){armedLogged=true;logf("minimap hotkeys armed: Ctrl+Alt+F2 grow, Ctrl+Alt+F3 shrink (scale=%d)",minimapScale);}
  if(!held){previous=0;repeatAt=0;return;}
  unsigned pressed=held&~previous;
  DWORD now=GetTickCount();
@@ -937,6 +1021,16 @@ static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,con
  ReentryGuard guard(presentReentry);
  pollCameraHotkeys();
  pollMinimapHotkeys();
+ // The minimap rectangles are rediscovered every frame by the base-map quads;
+ // the ones found so far become the fallback for markers submitted early in the
+ // next frame.
+ minimapRectsPrevCount=minimapRectsNowCount;
+ memcpy(minimapRectsPrev,minimapRectsNow,sizeof(minimapRectsPrev));
+ minimapRectsNowCount=0;
+ minimapFrameBaseArea=0.0f;
+ {LONG markers=InterlockedExchange(&minimapMarkerDraws,0);
+  static LONG loggedMarkers=-1;static unsigned markerFrames=0;
+  if(minimapScale!=100&&++markerFrames>=180){markerFrames=0;if(markers!=loggedMarkers){loggedMarkers=markers;logf("minimap markers scaled per frame=%ld",markers);}}}
  // The frame is complete: the next frame gets a fresh background slot.
  InterlockedExchange(&orochiBackgroundTaken,0);
  // Decide, from the geometry this frame submitted, whether the game is sitting
@@ -1061,7 +1155,9 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  if(ours)forcePresentation(*p);HRESULT hr=fn?fn(d,adapter,type,focus,flags,p,out):D3DERR_INVALIDCALL;
  logf("D3D CreateDevice device=%p focus=%p present_hwnd=%p game_hwnd=%p ours=%d flags=%08lx request=%ux%u/%d actual=%ux%u/%d hr=%08lx",SUCCEEDED(hr)&&out?*out:nullptr,focus,p->hDeviceWindow,gameWindow,ours,flags,requestedW,requestedH,requestedWindowed,p->BackBufferWidth,p->BackBufferHeight,p->Windowed,hr);
  if(SUCCEEDED(hr)&&*out){
-  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture);}
+  // The minimap hotkeys are polled from Present, so that hook is needed even
+  // when no other feature is active.
+  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture||minimapHotkeys)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d minimap_hotkeys=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture,minimapHotkeys);}
   if(ours)installMenuDetectHooks(*(void***)*out);
   if(ours){
    UINT logicalW=requestedW,logicalH=requestedH;
@@ -1200,7 +1296,7 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
  device->Release();DestroyWindow(probe);api->Release();return 0;
 }
 static bool attachLateD3DPresentHook() {
- if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0))return false;
+ if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0&&!minimapHotkeys))return false;
  // DW3/DW4's Direct3DCreate9 entry point is imported and hooked before the
  // games create their devices. The extra probe/heap scan is redundant here;
  // it had started immediately before the recorded DW4 startup stack overflow.
@@ -1583,7 +1679,7 @@ static void platformConfigure() {
  logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_aspect_mode=%d scale_filter=%u single_present=%d IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleAspectMode,scaleFilter,singlePresentMode,imeIsolation,comCompatibility,quickClose,fpsLimit);
  attachExistingMainWindow();
  startMainWindowWatch();
- if(windowMode||fpsLimit>0)attachLateD3DPresentHook();
+ if(windowMode||fpsLimit>0||minimapHotkeys)attachLateD3DPresentHook();
 }
 // The inherited GS sprite format stores Y in unsigned 12.4 fixed point
 // with a 2048-pixel bias. A 2160-pixel bottom edge wraps to -1936.

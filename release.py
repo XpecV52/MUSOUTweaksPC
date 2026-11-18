@@ -9,11 +9,11 @@ import hashlib
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'V1.0.3'
+VERSION = 'V1.0.4'
 OUT = ROOT / '_rel'
 
 # Fixed timestamp so the archives are byte-reproducible across runs.
-STAMP = (2026, 11, 17, 0, 0, 0)
+STAMP = (2026, 11, 18, 0, 0, 0)
 
 # name, chinese title, english title, dll, ini, extra files (dst, src), tested game version
 GAMES = [
@@ -135,6 +135,15 @@ One sub-zip per game — extract only the one you need:
 
 「适配版本」是补丁实际验证过的游戏版本。补丁按可执行文件名和内存特征码识别，其他版本大概率也能用；换了版本后某个功能失效的话，把 ini 里的 `log` 改成 `1` 跑一次，日志会写明哪一步没匹配上。
 "Tested version" is the build each patch was verified against. Other builds will most likely work; if something stops working after an update, set `log=1` and the log says which step failed to match.
+
+## 相对 V1.0.3 的变化 / Changes since V1.0.3
+
+- **新增真三国无双3 小地图放大。** 这一作的小地图只有 104×128 像素（分屏时每个视口各一块），补丁在 D3D9 里把**每帧采样 410×440 地图图集的最大那个屏幕空间四边形**认作底图，复制顶点、以右上角为锚点等比放大后提交副本，默认 **160%**。地图上的单位点、玩家箭头、据点图标是各自单独提交的小四边形，会被匹配到所在视口的地图矩形、用同一套变换一起放大，底图与标记点始终同步；单人模式与上下分屏都生效。游戏自己的顶点缓冲不改，其他 HUD 不受影响。
+- 新增小地图热键：**`Ctrl+Alt+F2` 放大 / `Ctrl+Alt+F3` 缩小**，每次 10%，范围 80–320%，按住可连调，新值立即写回 `minimap_scale`。新增配置项 `minimap_scale`、`minimap_hotkeys`、`minimap_surface_width` / `minimap_surface_height`（后两个是地图纹理尺寸指纹，换语言版本时可调）。
+- **修复战国无双2 十字键不生效、以及十字键带动角色。** 该作菜单只认 `SendInput` 注入的键盘事件（既不轮询 DirectInput 键盘设备，也不认外部投递的窗口消息），所以 `dpad_arrow_keys` 对它改为 `2`。菜单光标与角色移动共用同一路键盘，补丁改为**只在菜单帧注入方向键**：在 D3D9 层统计每帧真实 3D 绘制数，低于 `menu_draw_threshold`（默认 `300`，实测菜单 0–1、战斗中暂停菜单 54、战斗 1524–2018）才注入，战斗中完全不注入，角色不会跟着走，左摇杆也完全不动。
+- **战国无双2 帧率默认改为 60。** 这一作逻辑每渲染一帧推进一次，帧率就是游戏速度；之前按 65 锁帧虽然节流准确（`pace target=65 actual=64.99`），但整体快 8.3%。
+- **修复战国无双2 锁帧完全没生效。** 该作的 D3D9 设备从未被挂上钩子（`Direct3DCreate9` 在 `dinput8.dll` 加载前就解析好了），晚挂钩线程又因为存在覆盖层就直接放弃。现在晚挂钩不再直接退出，会先给早期钩子宽限期，仍未接管才回退到堆扫描，并且只挂第一张匹配的设备 vtable。
+- 新增诊断开关 `quad_probe`：把每帧提交的屏幕空间四边形与纹理尺寸写进日志，用于定位 HUD 元素。
 
 ## 相对 V1.0.2 的变化 / Changes since V1.0.2
 
