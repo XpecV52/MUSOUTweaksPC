@@ -358,6 +358,11 @@ static const char* configFileNameForExecutable(const char* executable) {
  if(!_stricmp(executable,"SW2.exe"))return "SM2_Tweaks.ini";
  return "OrochiZPadX.ini";
 }
+static int menuKeyModeForExecutable(const char* executable){
+ // These two ports need the OS message path. DirectInput titles must receive
+ // their menu keys on their own keyboard device, including SSM3/SSM4.
+ return (!_stricmp(executable,"OROCHI_Z_TC.exe")||!_stricmp(executable,"SW2.exe"))?3:1;
+}
 static void init() {
  GetModuleFileNameA(selfModule,iniPath,MAX_PATH);
  char* slash=strrchr(iniPath,'\\'); if(slash)slash[1]=0;
@@ -370,13 +375,13 @@ static void init() {
  controllerTakeover=GetPrivateProfileIntA("input","controller_takeover",1,iniPath)!=0;
  secondSlotConfig=std::clamp((int)GetPrivateProfileIntA("input","player2_xinput_slot",-1,iniPath),-1,3);
  slotConfig=std::clamp((int)GetPrivateProfileIntA("padfix","xinput_slot",-1,iniPath),-1,3);
- menuKeyMode=(!_stricmp(executable,"SM5_WIN.exe")||!_stricmp(executable,"SM6TC.exe")||!_stricmp(executable,"SM6EN.exe")||!_stricmp(executable,"SM6JP.exe"))?1:3;
+ menuKeyMode=menuKeyModeForExecutable(executable);
  HMODULE xi=systemDll("xinput1_4.dll");if(!xi)xi=systemDll("xinput1_3.dll");if(!xi)xi=systemDll("xinput9_1_0.dll");
  if(xi){getXState=(decltype(getXState))GetProcAddress(xi,"XInputGetState");setXState=(decltype(setXState))GetProcAddress(xi,"XInputSetState");}
 #ifdef PADFIX_PLATFORM_ONLY
  enabled=0;logging=GetPrivateProfileIntA("platform","log",0,iniPath)!=0;
  platformConfigure();
-  logf("MUSOUTweaksPC 2.53-rc1 platform-only x86 config=%s",iniPath);
+  logf("MUSOUTweaksPC 2.53-rc2 platform-only x86 config=%s",iniPath);
  return;
 #else
  auto opt=[](const char* key,int def){return (int)GetPrivateProfileIntA("padfix",key,def,iniPath);};
@@ -403,7 +408,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x){getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");setXState=(decltype(setXState))GetProcAddress(x,"XInputSetState");}
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.53-rc1 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
+ logf("MUSOUTweaksPC 2.53-rc2 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);

@@ -7,10 +7,12 @@ static ULONGLONG menuSerial=0;
 static std::deque<MenuTransition> menuTransitions;
 static bool controllerMenuActive(){std::lock_guard<std::recursive_mutex> lock(mutex);return controllerTakeover&&menuSceneActive!=0&&armed&&wasConnected&&foreground();}
 static void sendMenuKey(unsigned k,bool down){
- if(menuKeyMode==1){
-  menuTransitions.push_back({++menuSerial,k,down,GetTickCount()});
-  if(menuTransitions.size()>256)menuTransitions.pop_front();return;
- }
+ // Keep an authoritative transition stream for every transport. A title can
+ // expose a DirectInput keyboard even when its other screens use WM_KEY*;
+ // filtering the duplicate OS event must not discard the controller's key.
+ menuTransitions.push_back({++menuSerial,k,down,GetTickCount()});
+ if(menuTransitions.size()>256)menuTransitions.pop_front();
+ if(menuKeyMode==1)return;
  INPUT in={};in.type=INPUT_KEYBOARD;
  in.ki.wScan=(WORD)MapVirtualKeyA(k?VK_ESCAPE:VK_RETURN,MAPVK_VK_TO_VSC);
  in.ki.dwFlags=KEYEVENTF_SCANCODE|(down?0:KEYEVENTF_KEYUP);in.ki.dwExtraInfo=controllerKeyTag;
@@ -37,14 +39,14 @@ static void pollControllerMenu(){
 static void mergeMenuKeys(BYTE* keys){
  if(!controllerMenuActive())return;
  keys[DIK_RETURN]=keys[DIK_ESCAPE]=0;
- if(menuKeyMode==1){if(menuKeys[0])keys[DIK_RETURN]=0x80;if(menuKeys[1])keys[DIK_ESCAPE]=0x80;}
+ if(menuKeys[0])keys[DIK_RETURN]=0x80;
+ if(menuKeys[1])keys[DIK_ESCAPE]=0x80;
 }
 static void filterMenuEvents(DIDEVICEOBJECTDATA* events,DWORD* count){
  if(!events||!controllerMenuActive())return;
  DWORD out=0;for(DWORD i=0;i<*count;i++)if(events[i].dwOfs!=DIK_RETURN&&events[i].dwOfs!=DIK_ESCAPE)events[out++]=events[i];*count=out;
 }
 static void appendMenuEvents(DIDEVICEOBJECTDATA* events,DWORD* count,DWORD capacity,DWORD flags,ULONGLONG& cursor){
- if(menuKeyMode!=1)return;
  for(const auto& transition:menuTransitions)if(transition.serial>cursor&&*count<capacity){
   DIDEVICEOBJECTDATA e={};e.dwOfs=transition.key?DIK_ESCAPE:DIK_RETURN;e.dwData=transition.down?0x80:0;e.dwTimeStamp=transition.time;
   if(events)events[*count]=e;++*count;if(!(flags&DIGDD_PEEK))cursor=transition.serial;

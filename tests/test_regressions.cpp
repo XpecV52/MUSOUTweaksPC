@@ -57,6 +57,46 @@ int main(){
  pad.SendForceFeedbackCommand(DISFFC_STOPALL);check(!motors[0].wLeftMotorSpeed,"stop-all silences motor");
  effect->Start(INFINITE,0);online[0]=false;updateRumble();DWORD status=99;effect->GetEffectStatus(&status);check(!status,"disconnect stops effect");
  online[0]=true;stopRumble(0);effect->Release();check(padEffects.empty(),"effect COM lifetime cleaned");
+ // Exercise the actual production keyboard wrapper, not just merge helpers.
+ // An OS-injected key used to be cleared by the wrapper while A/B were also
+ // suppressed on the pad, leaving neither channel able to confirm or cancel.
+ check(menuKeyModeForExecutable("ShinSangokumusou3.exe")==1,"SSM3 menu uses its DirectInput keyboard");
+ check(menuKeyModeForExecutable("SM4_WIN.exe")==1,"SSM4 menu uses its DirectInput keyboard");
+ check(menuKeyModeForExecutable("OROCHI_Z_TC.exe")==3&&menuKeyModeForExecutable("SW2.exe")==3,"message-only ports retain OS delivery");
+ HMODULE inputModule=systemDll("dinput8.dll");
+ auto create=(HRESULT(WINAPI*)(HINSTANCE,DWORD,REFIID,void**,LPUNKNOWN))GetProcAddress(inputModule,"DirectInput8Create");
+ IDirectInput8A* systemInput=nullptr;
+ check(create(GetModuleHandleA(nullptr),0x800,IID_IDirectInput8A,(void**)&systemInput,nullptr)==DI_OK,"real keyboard integration factory");
+ HWND keyboardWindow=CreateWindowExA(0,"STATIC","Menu takeover regression",0,0,0,1,1,nullptr,nullptr,GetModuleHandleA(nullptr),nullptr);
+ check(keyboardWindow!=nullptr,"real keyboard integration window");
+ menuSceneActive=1;states[0]={};sample();pollControllerMenu();
+ for(int mode:{menuKeyModeForExecutable("ShinSangokumusou3.exe"),3}){
+  menuKeyMode=mode;
+  IDirectInputDevice8A* systemKeyboard=nullptr;
+  check(systemInput->CreateDevice(GUID_SysKeyboard,&systemKeyboard,nullptr)==DI_OK,"real keyboard integration device");
+  Device keyboard(systemKeyboard,true);
+  check(keyboard.SetDataFormat(&c_dfDIKeyboard)==DI_OK,"real keyboard integration format");
+  check(keyboard.SetCooperativeLevel(keyboardWindow,DISCL_BACKGROUND|DISCL_NONEXCLUSIVE)==DI_OK,"real keyboard integration cooperative level");
+  DIPROPDWORD buffering={{sizeof(buffering),sizeof(DIPROPHEADER),0,DIPH_DEVICE},32};
+  check(keyboard.SetProperty(DIPROP_BUFFERSIZE,&buffering.diph)==DI_OK&&keyboard.Acquire()==DI_OK,"real keyboard integration acquired");
+  for(unsigned k=0;k<2;k++){
+   const BYTE dik=k?DIK_ESCAPE:DIK_RETURN;
+   states[0].Gamepad.wButtons=k?XINPUT_GAMEPAD_A:XINPUT_GAMEPAD_B;
+   BYTE actualKeys[256]={};
+   check(keyboard.GetDeviceState(256,actualKeys)==DI_OK&&(actualKeys[dik]&0x80),"1P B/A reaches real polled keyboard after physical-key filtering");
+   count=8;check(keyboard.GetDeviceData(sizeof(events[0]),events,&count,DIGDD_PEEK)==DI_OK,"real buffered keyboard peek");
+   bool downSeen=false;for(DWORD i=0;i<count;i++)if(events[i].dwOfs==dik&&events[i].dwData==0x80)downSeen=true;
+   check(downSeen,"1P B/A reaches buffered keyboard after duplicate filtering");
+   count=8;keyboard.GetDeviceData(sizeof(events[0]),events,&count,0);
+   states[0]={};ticks+=61;
+   check(keyboard.GetDeviceState(256,actualKeys)==DI_OK&&!(actualKeys[dik]&0x80),"real polled keyboard menu pulse releases");
+   count=8;keyboard.GetDeviceData(sizeof(events[0]),events,&count,0);
+   bool upSeen=false;for(DWORD i=0;i<count;i++)if(events[i].dwOfs==dik&&!events[i].dwData)upSeen=true;
+   check(upSeen,"real buffered keyboard menu pulse releases");
+  }
+  keyboard.Unacquire();systemKeyboard->Release();
+ }
+ systemInput->Release();DestroyWindow(keyboardWindow);
  monitorBounds={10,20,1930,1100};WINDOWPOS pos={};pos.hwndInsertAfter=HWND_TOP;pos.flags=SWP_NOMOVE|SWP_NOSIZE;
  constrainBorderlessPosition(&pos);check(pos.hwndInsertAfter==HWND_TOP&&!(pos.flags&SWP_NOZORDER),"taskbar activation preserves requested Z-order");
  check(pos.x==10&&pos.y==20&&pos.cx==1920&&pos.cy==1080,"borderless monitor geometry retained");

@@ -110,6 +110,10 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 更新记录
 
+### 2.53-rc2（修复候选）
+
+修正真三3/4菜单接管的输入通道，避免原生A/B已屏蔽、替代Enter/Esc又被键盘过滤吞掉。所有通道都保留手柄按键状态和缓冲事件；新增真实DirectInput键盘集成检查，231项检查通过。保持默认开启1P菜单接管（B确认/A返回）。
+
 ### 2.53-rc1（修复候选）
 
 修正方向键短按过早连发、真三5扳机轴/按钮重复输出、无边框激活时被强制压到其他窗口后方的问题；新增 `[input] controller_takeover`、独立2P虚拟设备与DirectInput到XInput的震动转换。真三7保留原生XInput并增加后台震动清理。菜单覆盖、实体震动和远程同乐仍需实机验收，详见 [FIX_STATUS.md](FIX_STATUS.md)。
