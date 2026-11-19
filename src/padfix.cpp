@@ -79,6 +79,8 @@ static int triggerAxes=1;
 // Only the explicitly assigned first player's source may synthesize menu keys.
 static int controllerTakeover=1, secondSlotConfig=-1;
 static int menuKeyMode=3;
+static volatile LONG nativeSplitMenuActive=0;
+static bool installSplitMenuRouting(BYTE* base,DWORD imageSize,const char* exe);
 static bool controllerMenuActive();
 static void pollControllerMenu();
 static void updateRumble();
@@ -408,7 +410,7 @@ static void init() {
  HMODULE x=systemDll("xinput1_4.dll"); if(!x)x=systemDll("xinput9_1_0.dll");
  if(x){getXState=(decltype(getXState))GetProcAddress(x,"XInputGetState");setXState=(decltype(setXState))GetProcAddress(x,"XInputSetState");}
  HMODULE d=systemDll("dinput8.dll");if(d)createSystemInput=(decltype(createSystemInput))GetProcAddress(d,"DirectInput8Create");
- logf("MUSOUTweaksPC 2.53-rc2 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
+ logf("MUSOUTweaksPC 2.53-rc3 x86 enable=%d backend=%d slot=%d menu_navigation=%d XInput=%d pad_axes=%d pad_name=%s dpad_repeat=%d/%d/%d config=%s",enabled,backend,slotConfig,menuNavigation,getXState!=nullptr,padAxes,padName,dpadRepeatMs,dpadRepeatDelayMs,dpadPulseMs,iniPath);
  // Only the inspected build is supported for native menu table integration.
  // Match two independent code fingerprints before resolving the table RVA.
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -440,6 +442,9 @@ static void init() {
   logf("SSM3 mapping-table build signature matched; menu table will be selected by live binding fingerprint");
  }
  if(!nativeMenuMap&&!nativeMenuMapCandidateCount)logf("native menu map unavailable for this EXE; D-pad buttons and POV remain available");
+ if(enabled&&isLegacyHighResolutionExecutable(executable)&&controllerTakeover&&
+    !installSplitMenuRouting(base,nt->OptionalHeader.SizeOfImage,executable))
+  logf("split menu routing unavailable: executable signature did not match");
  platformConfigure();
  // Auto mode: SSM3 PC wants a continuous mirror because its menu table cannot
  // be reached. SSM6 DX and DW6 PC use dpad_arrow_keys instead, so their D-pad
@@ -722,6 +727,7 @@ static PadState sampleSecond() {
  return out;
 }
 #include "controller.inc"
+#include "split_menu.inc"
 static DIDEVICEINSTANCEA instance(unsigned player=0) {
  DIDEVICEINSTANCEA i={};i.dwSize=sizeof(i);i.guidInstance=i.guidProduct=padGuid;
  if(player)i.guidInstance=i.guidProduct=pad2Guid;

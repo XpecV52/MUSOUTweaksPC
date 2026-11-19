@@ -5,7 +5,10 @@ static ULONGLONG menuKeyUntil[2]={};
 struct MenuTransition{ULONGLONG serial;unsigned key;bool down;DWORD time;};
 static ULONGLONG menuSerial=0;
 static std::deque<MenuTransition> menuTransitions;
-static bool controllerMenuActive(){std::lock_guard<std::recursive_mutex> lock(mutex);return controllerTakeover&&menuSceneActive!=0&&armed&&wasConnected&&foreground();}
+static bool controllerMenuActive(){
+ std::lock_guard<std::recursive_mutex> lock(mutex);
+ return controllerTakeover&&(menuSceneActive||nativeSplitMenuActive)&&armed&&wasConnected&&foreground();
+}
 static void sendMenuKey(unsigned k,bool down){
  // Keep an authoritative transition stream for every transport. A title can
  // expose a DirectInput keyboard even when its other screens use WM_KEY*;
@@ -21,7 +24,7 @@ static void sendMenuKey(unsigned k,bool down){
 static void pollControllerMenu(){
  std::lock_guard<std::recursive_mutex> lock(mutex);
  if(!controllerTakeover)return;
- const bool active=controllerMenuActive()&&foreground()&&armed;
+ const bool active=controllerMenuActive()&&!nativeSplitMenuActive;
  const WORD buttons=(WORD)lastPadButtons;
  const WORD masks[]={XINPUT_GAMEPAD_B,XINPUT_GAMEPAD_A};
  ULONGLONG now=GetTickCount64();
@@ -39,12 +42,20 @@ static void pollControllerMenu(){
 static void mergeMenuKeys(BYTE* keys){
  if(!controllerMenuActive())return;
  keys[DIK_RETURN]=keys[DIK_ESCAPE]=0;
+ if(nativeSplitMenuActive)keys[DIK_W]=keys[DIK_A]=keys[DIK_S]=keys[DIK_D]=0;
  if(menuKeys[0])keys[DIK_RETURN]=0x80;
  if(menuKeys[1])keys[DIK_ESCAPE]=0x80;
 }
 static void filterMenuEvents(DIDEVICEOBJECTDATA* events,DWORD* count){
  if(!events||!controllerMenuActive())return;
- DWORD out=0;for(DWORD i=0;i<*count;i++)if(events[i].dwOfs!=DIK_RETURN&&events[i].dwOfs!=DIK_ESCAPE)events[out++]=events[i];*count=out;
+ DWORD out=0;
+ for(DWORD i=0;i<*count;i++){
+  const DWORD key=events[i].dwOfs;
+  if(key==DIK_RETURN||key==DIK_ESCAPE)continue;
+  if(nativeSplitMenuActive&&(key==DIK_W||key==DIK_A||key==DIK_S||key==DIK_D))continue;
+  events[out++]=events[i];
+ }
+ *count=out;
 }
 static void appendMenuEvents(DIDEVICEOBJECTDATA* events,DWORD* count,DWORD capacity,DWORD flags,ULONGLONG& cursor){
  for(const auto& transition:menuTransitions)if(transition.serial>cursor&&*count<capacity){

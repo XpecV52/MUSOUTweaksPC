@@ -3,14 +3,14 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '2.53-rc2'
+VERSION = '2.53-rc3'
 files = ['README.md','OrochiZPadX.ini','SSM3_Tweaks.ini','SSM4_Tweaks.ini','SSM5_Tweaks.ini',
          'SSM6_Tweaks.ini','SM2_Tweaks.ini','SSM7_Tweaks.ini','CONFIGURATION.md','MULTI_GAME.md',
          'THIRD_PARTY_MODS.md',
          'SW2_DIAGNOSIS.md','install-targets.ps1','install-sw2.ps1','install-ssm6dx.ps1','install-ssm5.ps1','restore.ps1',
          'build.cmd','build-platform.cmd','package.py','release.py','publish.py','.gitignore',
          'build/dinput8.dll','build/dinput8-platform.dll',
-         'src/padfix.cpp','src/controller.inc','src/platform.inc','src/dinput8.def','src/dinput8-platform.def',
+         'src/padfix.cpp','src/controller.inc','src/split_menu.inc','src/platform.inc','src/dinput8.def','src/dinput8-platform.def',
          'package-candidate.py','test.cmd','tests/test_regressions.cpp','tests/test_padfix.cpp','tests/test_platform.cpp','FIX_STATUS.md',
          'src/sw2resolution/sw2_resolution.c','src/sw2resolution/sw2_hud.c','src/sw2resolution/LICENSE',
          'supplemental/ssm6tc/d3dx9_43.dll',

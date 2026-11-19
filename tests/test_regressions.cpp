@@ -20,6 +20,53 @@ static void check(bool v,const char* m){++checks;if(!v){fprintf(stderr,"FAIL: %s
 int main(){
  foregroundOnly=0;neutralMs=0;getXState=fakeGet;setXState=fakeSet;controllerTakeover=1;
  sample();sample();check(selectedSlot==0&&armed,"1P pinned to slot 0 and armed");
+ // Both engine layouts must replace the duplicated 2P native action bits,
+ // including the repeat word used for cursor navigation.
+ for(const SplitMenuProfile* profile:{&splitSsm3,&splitSsm4}){
+  std::vector<BYTE> image(0x640000);
+  splitBase=image.data();splitProfile=profile;splitSourcesReady=true;
+  auto word=[&](unsigned player,unsigned kind)->DWORD&{
+   DWORD base=player?profile->player2Actions:profile->player1Actions;
+   unsigned offset=profile->packedActions?kind:(kind?kind+1:0);
+   return ((DWORD*)(splitBase+base))[offset];
+  };
+  const unsigned secondShift=profile->packedActions?16:0;
+  const auto second=[&](unsigned kind){return WORD(word(1,kind)>>secondShift);};
+  splitPadKeys.update(4|profile->confirm,1000);
+  splitKeyboardKeys.update(2|profile->cancel,1000);
+  word(1,1)=0xffffffff;
+  applySplitMenuActions(true,true);
+  check(second(1)==0xffff,"no co-op routing before player two joins");
+  splitCharMode=2;
+  auto* join=(DWORD*)(splitBase+profile->characterJoinPrompt);
+  join[0]=1;join[1]=0;
+  check(!nativeSplitJoined(),"pending dual-player selection preserves native join shortcut");
+  join[1]=1;
+  check(nativeSplitJoined()&&!splitCharP1Ready,"2P joins before the native selector marks 1P ready");
+  splitCharMode=-1;
+  *(DWORD*)(splitBase+profile->joinedFlags)=0x100;
+  applySplitMenuActions(false,false);
+  check(!second(1)&&!second(2),"common menus accept no player two input even when joined");
+  applySplitMenuActions(true,false);
+  check((WORD)word(0,1)==(WORD)((0xffff&~(15|profile->confirm|profile->cancel))|4|profile->confirm)||
+        (!profile->packedActions&&(WORD)word(0,1)==(4|profile->confirm)),"1P keeps its controller direction and B confirm");
+  check(second(1)==2&&second(2)==2,"2P uses only keyboard direction while 1P is unready");
+  applySplitMenuActions(true,true);
+  check(second(1)==(2|profile->cancel)&&second(2)==(2|profile->cancel),"2P Escape reaches its native action word after 1P is ready");
+  splitKeyboardKeys.update(2|profile->cancel,1410);
+  applySplitMenuActions(true,true);
+  check(second(1)==0&&second(2)==2,"held cancel does not repeat while direction does");
+  splitPadKeys={};splitKeyboardKeys={};
+ }
+ splitProfile=nullptr;splitBase=nullptr;splitSourcesReady=false;
+ nativeSplitMenuActive=1;
+ BYTE nativeKeyboard[256]={};nativeKeyboard[DIK_S]=nativeKeyboard[DIK_F1]=0x80;
+ mergeMenuKeys(nativeKeyboard);
+ check(!nativeKeyboard[DIK_S]&&nativeKeyboard[DIK_F1],"polled keyboard isolates 2P movement while preserving native Join");
+ DIDEVICEOBJECTDATA sharedEvents[2]={};sharedEvents[0].dwOfs=DIK_W;sharedEvents[1].dwOfs=DIK_F12;
+ DWORD sharedCount=2;filterMenuEvents(sharedEvents,&sharedCount);
+ check(sharedCount==1&&sharedEvents[0].dwOfs==DIK_F12,"buffered keyboard isolates 2P movement and keeps Join");
+ nativeSplitMenuActive=0;
  // A 150 ms tap used to emit two key-downs. Repeat starts after 400 ms.
  dpadArrowKeys=2;menuInjectOnly=1;menuSceneActive=1;dpadRepeatDelayMs=400;
  lastDpadBits=XINPUT_GAMEPAD_DPAD_DOWN;maybeSendArrowKeys();

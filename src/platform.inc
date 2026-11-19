@@ -1437,7 +1437,7 @@ static uintptr_t __cdecl orochiRendererCamera(BYTE* renderer,BYTE* camera) {
  if(changed)memcpy(camera+0x1c0,saved,sizeof(saved));
  return result;
 }
-static bool buildOrochiCameraTrampoline(BYTE* site,const BYTE* expected,SIZE_T size,void* hook,void** original) {
+static bool buildInlineTrampoline(BYTE* site,const BYTE* expected,SIZE_T size,void* hook,void** original) {
  if(memcmp(site,expected,size))return false;
  BYTE* code=(BYTE*)VirtualAlloc(nullptr,size+5,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);
  if(!code)return false;
@@ -1455,8 +1455,8 @@ static void patchOrochiCamera() {
  const BYTE projection[]={0x83,0xec,0x74,0x53,0x8b,0x5c,0x24,0x7c};
  const BYTE renderer[]={0x83,0xec,0x30,0x56,0x8b,0x74,0x24,0x3c};
  if(memcmp(base+0xf9c70,projection,sizeof(projection))||memcmp(base+0xf9950,renderer,sizeof(renderer)))return;
- if(!buildOrochiCameraTrampoline(base+0xf9c70,projection,sizeof(projection),(void*)orochiCameraProjection,(void**)&originalOrochiProjection))return;
- if(!buildOrochiCameraTrampoline(base+0xf9950,renderer,sizeof(renderer),(void*)orochiRendererCamera,(void**)&originalOrochiRendererCamera))return;
+ if(!buildInlineTrampoline(base+0xf9c70,projection,sizeof(projection),(void*)orochiCameraProjection,(void**)&originalOrochiProjection))return;
+ if(!buildInlineTrampoline(base+0xf9950,renderer,sizeof(renderer),(void*)orochiRendererCamera,(void**)&originalOrochiRendererCamera))return;
  readCameraSettings();cameraTweakActive=true;
  logf("Orochi player camera distance installed: CPU projection + renderer; preparation map excluded");
 }
