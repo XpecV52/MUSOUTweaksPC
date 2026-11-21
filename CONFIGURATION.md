@@ -1,6 +1,7 @@
-# MUSOUTweaksPC 2.53-rc2 配置说明
+# MUSOUTweaksPC V1.0.5 配置说明
 
 本文说明游戏配置。`dinput8.dll` 在游戏启动时按可执行文件选择同目录配置；修改后请完全退出并重新启动游戏。
+This document describes the game configs. `dinput8.dll` selects the config beside the executable at startup. Exit and restart the game after editing.
 
 | 游戏 | 适配版本 | 配置文件 |
 |---|---|---|
@@ -24,7 +25,7 @@
 
 ## 手柄与按键
 
-2.53-rc2 新增 `[input]` 节，适用于全部游戏配置：
+V1.0.5 的 `[input]` 节适用于全部游戏配置：
 
 ```ini
 [input]
@@ -32,17 +33,20 @@ controller_takeover=1
 player2_xinput_slot=-1
 ```
 
-`controller_takeover=1` 在识别为菜单的场景中，由已连接且通过松键保护的1P手柄 B/A 接管 Enter/Esc，屏蔽原键盘确认/返回和原生 A/B，避免一次按键走两条输入路径。无1P手柄时仍保留键盘。`0` 关闭接管，恢复键盘优先和旧的 `pad_enter_*` 设置。该开关启用时，`[padfix] xinput_slot=-1` 按固定槽位0处理；1P手柄在其他槽位时请明确指定 `xinput_slot=1/2/3`。断开1P不会把2P提升为菜单控制器。
+`controller_takeover=1` 时，1P只由已连接且通过松键保护的手柄接管全局菜单确认/返回，包括退出确认。DirectInput 菜单直接使用手柄 B/A，消息型菜单使用同一手柄生成 Enter/Esc，并屏蔽1P键盘重复输入。2P只使用键盘或第二个手柄，当前菜单存在2P光标时才接收2P操作，不会写入1P动作位。`0` 关闭接管，恢复游戏原生的1P键盘和2P手柄/右侧键盘分配，同时不安装新增的双人菜单路由、不过滤公共菜单键、不交换输入映射表。该开关启用时，`[padfix] xinput_slot=-1` 按固定槽位0处理；1P手柄在其他槽位时请明确指定 `xinput_slot=1/2/3`。断开1P不会把2P提升为菜单控制器。
+With `controller_takeover=1`, the connected and neutral-armed P1 pad owns global menu confirm/back, including exit confirmation. DirectInput menus use pad B/A directly. Message-based menus receive Enter/Esc from the same pad, while duplicate P1 keyboard input is filtered. P2 uses its keyboard or second controller only when the current menu exposes a P2 cursor. With `0`, native P1 keyboard and P2 controller/right-side keyboard ownership is restored. The added co-op routes, shared-key filtering, and temporary map swaps are not installed. With takeover enabled, `[padfix] xinput_slot=-1` pins P1 to slot 0. Set `xinput_slot=1/2/3` when P1 is on another slot. Disconnecting P1 never promotes P2 to the menu owner.
 
-`player2_xinput_slot=-1` 自动选择1P以外的在线 XInput 手柄，也可指定0–3。只有检测到第二个手柄才枚举2P虚拟设备。2P只在战斗场景输出游戏控制，不生成共享键盘按键。当前2P支持XInput；原生DS4读取仍限1P。
+`player2_xinput_slot=-1` 自动选择1P以外的在线 XInput 手柄，也可指定0–3。只有检测到第二个手柄才枚举2P虚拟设备。2P手柄在战斗和游戏明确提供2P光标的菜单中输出到2P动作位，公共菜单仍由1P接管。双人菜单中的2P键盘动作继续写入2P自己的动作位，不生成共享键盘按键。
+`player2_xinput_slot=-1` selects the first online XInput pad other than P1. Values `0`–`3` pin the slot. The second virtual device is exposed only when a second pad is detected. Its battle and P2-cursor menu input is written to P2 action words, while public menus remain owned by P1. P2 keyboard actions also stay in P2 action words and never become shared keyboard input.
 
-真三3、真三4的匹配版本在双人选人和战前准备中分开读取两位玩家。1P手柄使用摇杆或十字键移动，B确认、A取消。2P加入后，键盘WASD只移动2P光标，Enter/Esc只在游戏进入2P选人阶段或检测到1P已准备时交给2P。若战斗输入表原本是1P键盘、2P手柄，接管时临时交换两个玩家的输入表，游戏保存的键位不会改写。关闭 `controller_takeover` 恢复原生分配。
+支持双人菜单接管的游戏按各自的选人和准备状态分开读取两位玩家。1P手柄使用摇杆或十字键移动，B 确认、A 返回。2P加入后用键盘 WASD 移动，Enter 或 L 确认，Esc 或 K 返回，`TAB/J/I/Space/Shift` 等原生2P动作键保留在2P动作位。确认和返回只在游戏已切到 2P 选人或 1P 已准备时从 2P 键盘读取。关闭 `controller_takeover` 恢复原生分配。
+Supported co-op menus read P1 and P2 from each title's selector and preparation state. P1 uses the pad stick or D-pad, B confirms, and A backs out. After P2 joins, WASD moves the P2 cursor, Enter or L confirms, and Esc or K backs out. Native P2 actions such as `TAB/J/I/Space/Shift` remain in P2 action words. P2 confirm/back is accepted only when the title has switched to the P2 selector or P1 is ready. Disabling `controller_takeover` restores native allocation.
 
 菜单判定沿用每帧3D绘制计数，并在 `[platform] menu_draw_threshold` 配置阈值（默认300）。战国2有既有校准证据，其他作品的复杂3D菜单尚需实机校准；**不能把这个候选实现视为所有菜单均已验证**。1P使用手柄时请保留 `foreground_only=1`，以免向其他应用注入按键。
 
 真三5新增 `[padfix] trigger_axes=0`：保持右摇杆轴和LT/RT独立按钮，令重复的Z/Rz扳机轴保持松开，避免召马与游戏原生地图切换同时触发。其他作品默认1，旧版如果绑定的是扳机轴，需要在游戏中重新绑定到LT/RT按钮。
 
-虚拟手柄新增DirectInput恒力、斜坡和周期力到XInput双马达的强度转换，支持时长、增益、停止、暂停、断连与失焦清理。此实现将力效果转换成振动强度，不重现方向盘的力方向或完整波形。原生DS4尚无马达输出路径；需要震动时应使用DS4Windows/Steam Input提供XInput。真三7保留原生XInput震动调用，并增加后台停止保护；战斗触发和物理马达仍待实测。
+DirectInput 恒力、斜坡和周期效果会转换为 XInput 或原生 DualShock 4 双马达输出。DS4 支持 USB 和蓝牙。真三7沿用原补丁的原生手柄输入与键盘托管，游戏的 DirectInput 力反馈请求优先使用原驱动，驱动无法创建效果时由补丁驱动兼容手柄。实体马达与各游戏战斗触发仍需实机验收。
 
 这些项目位于 `[padfix]`。
 
@@ -71,6 +75,8 @@ player2_xinput_slot=-1
 | `neutral_ms` | `250` | 手柄连接或游戏重新获得焦点后，要求所有按键松开、摇杆居中的保护时间，单位毫秒，范围 `0`–`5000`。设为 `0` 可关闭等待；建议保留默认值。|
 | `ds4_right_x` | `2` | 原生 DS4 右摇杆 X 轴索引，范围 `0`–`5`。索引依次为 X、Y、Z、Rx、Ry、Rz。|
 | `ds4_right_y` | `5` | 原生 DS4 右摇杆 Y 轴索引，范围 `0`–`5`。标准 DS4 默认使用 Z/Rz（`2`/`5`）。仅当特定原生 DS4 驱动的轴顺序不同时修改。|
+| `rumble_scale` | `100`（真三5为 `800`） | 原生力反馈输出倍率，范围 `0`–`800`；`100` 保持游戏原值，`0` 静音。仅缩放游戏已经产生的震动效果，不生成额外震动。 / Native force-feedback output scale, `0`–`800`; `100` keeps the game's value and `0` mutes it. It scales effects already requested by the game. |
+| `impact_audio_scale` | `100`（真三5为 `800`） | 仅真三5原生打击音效事件的增益，范围 `100`–`800`；不改变 BGM、语音或游戏总音量。`100` 为原始值。 / SM5 impact-event sound gain only, `100`–`800`; BGM, voices and master volume are unchanged. `100` is the original value. |
 
 十字键在键盘方向注入生效时暂时屏蔽重复的按钮/POV输出，其余场景作为独立 DirectInput 按钮提供：上/下/左/右对应 Button 13/14/15/16，并可另行暴露为 POV。`dpad_as_left_stick=0` 时它们不会进入左摇杆轴，因此不会驱动战斗移动。真三6 DX 的菜单不认按钮与 POV，改为用 `dpad_arrow_keys` 在游戏的键盘设备上按下方向键来移动光标；战国2 的菜单同样不认按钮与 POV，只认 DirectInput 键盘，而它的菜单光标与角色移动共用同一路键盘输入，所以用 `dpad_arrow_keys=2`（`SendInput`）送方向键，并由 `menu_inject_only=1` 限定只在菜单帧注入——战斗里十字键不会带动角色。
 
@@ -201,6 +207,10 @@ Camera distance uses `camera_distance_percent` (50–300, default 100). It moves
 `camera_hotkey_modifiers` 为修饰键位掩码：Ctrl=`1`、Alt=`2`、Shift=`4`，相加组合，默认 `3`；`0` 不要求修饰键。`camera_hotkey_farther` / `camera_hotkey_nearer` / `camera_hotkey_reset` 使用十进制 Windows 虚拟键码，默认 `33`（PageUp）、`34`（PageDown）、`36`（Home）；对应设为 `0` 禁用该动作。上述选项也支持运行中修改。
 
 Camera shortcuts work only in the game foreground. Ctrl+Alt+PageUp/PageDown moves farther/nearer; Ctrl+Alt+Home resets to 100. Hold to repeat; each step defaults to 5 percentage points. Changes persist to the INI. Modifier bits are Ctrl=1, Alt=2, Shift=4; key options use Windows virtual-key codes, with 0 disabling the action.
+
+### 真三6DX镜头远近
+
+`SSM6_Tweaks.ini` 支持与真三7相同的 `camera_distance_percent`、`camera_hotkeys`、`camera_distance_step` 和快捷键配置。默认 `camera_distance_percent=125`。Ctrl+Alt+PageUp 拉远，Ctrl+Alt+PageDown 拉近，Ctrl+Alt+Home 恢复 `100`。设置只在游戏前台响应，并写回当前配置。
 
 ### 蛇魔Z战斗镜头
 

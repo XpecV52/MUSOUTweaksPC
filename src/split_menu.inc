@@ -22,6 +22,8 @@ static thread_local const DWORD* splitPrepareReadyBits;
 static thread_local bool insideSplitPrepareScreen;
 static thread_local bool splitCharP1Ready;
 static thread_local int splitCharMode=-1;
+static bool splitSecondJoined=false;
+static BYTE* splitJoinedBase=nullptr;
 static int (__cdecl *originalSsm3CharScreen)(int,int,int,int,int);
 static int (__cdecl *originalSsm4CharScreen)(int,int,int,int);
 static int (__cdecl *originalCharPlayer)(int);
@@ -39,6 +41,8 @@ struct SplitMenuKeys {
 };
 static SplitMenuKeys splitPadKeys,splitKeyboardKeys;
 static bool splitSourcesReady=false;
+static bool splitMapFingerprintLogged=false;
+static int splitLastJoined=-1,splitLastMenu=-1;
 
 static int __cdecl runSplitPrepareScreen(int mode){
  const auto previousReady=splitPrepareReadyBits;
@@ -64,25 +68,21 @@ static int __cdecl runSsm4CharScreen(int first,int mode,int third,int fourth){
  splitCharMode=previous;
  return result;
 }
-static int __cdecl runSplitCharPlayer(int player){
- const bool previous=splitCharP1Ready;
- // In mode 2 the native screen calls the player-2 loop only when player 1
- // has completed selection. Mode 1 can enter player 2 without this check.
- splitCharP1Ready=splitCharMode==2&&player==1;
- const int result=originalCharPlayer(player);
- splitCharP1Ready=previous;
- return result;
-}
-
 static bool nativeSplitJoined(){
  if(!splitProfile)return false;
+ if(splitJoinedBase!=splitBase){splitJoinedBase=splitBase;splitSecondJoined=false;}
+ if(splitCharP1Ready){splitSecondJoined=true;return true;}
+ bool live=false;
  if(splitCharMode==2){
   // Same gate the native selector uses before entering the P2 loop. In
   // particular SSM3 needs the unfiltered F1 action until the prompt joins P2.
   const DWORD* join=(const DWORD*)(splitBase+splitProfile->characterJoinPrompt);
-  return splitCharP1Ready||join[0]==0||join[1]!=0;
+  live=join[0]==0||join[1]!=0;
+ }else{
+  live=(*(const DWORD*)(splitBase+splitProfile->joinedFlags)&0x100)!=0;
  }
- return (*(const DWORD*)(splitBase+splitProfile->joinedFlags)&0x100)!=0;
+ if(live){splitSecondJoined=true;InterlockedExchange(&secondMenuKeyboardPassthrough,1);}
+ return live||splitSecondJoined;
 }
 static bool nativeCommonMenu(){
  if(!splitProfile)return false;
@@ -91,10 +91,13 @@ static bool nativeCommonMenu(){
  return game&&game[0x3f9]==0;
 }
 static WORD splitKeyboardState(WORD confirm,WORD cancel){
- const int keys[]={ 'W','S','A','D',VK_RETURN,VK_ESCAPE };
- const WORD actions[]={1,2,4,8,confirm,cancel};
+ const int directions[]={'W','S','A','D'};
  WORD state=0;
- for(unsigned i=0;i<6;i++)if(GetAsyncKeyState(keys[i])&0x8000)state|=actions[i];
+ for(unsigned i=0;i<4;i++)if(GetAsyncKeyState(directions[i])&0x8000)state|=1<<i;
+ // Message-based public menus can still have a 1P-generated key down on
+ // entry. Deliver physical aliases here without forwarding that pulse to 2P.
+ if((GetAsyncKeyState('L')&0x8000)||((menuKeyMode==1||!menuKeys[0])&&(GetAsyncKeyState(VK_RETURN)&0x8000)))state|=confirm;
+ if((GetAsyncKeyState('K')&0x8000)||((menuKeyMode==1||!menuKeys[1])&&(GetAsyncKeyState(VK_ESCAPE)&0x8000)))state|=cancel;
  return state;
 }
 static WORD splitPadState(const PadState& state,WORD raw,WORD confirm,WORD cancel){
@@ -105,13 +108,54 @@ static WORD splitPadState(const PadState& state,WORD raw,WORD confirm,WORD cance
  if(state.x>96)buttons|=8;
  return buttons;
 }
-static WORD splitKeyboardActions(WORD directions,WORD confirmCancel,bool secondCursor,bool ready){
+static WORD splitSecondPadState(const PadState& state,WORD confirm,WORD cancel){
+ WORD buttons=state.dpad;
+ if(state.buttons[1])buttons|=confirm;
+ if(state.buttons[0])buttons|=cancel;
+ if(state.y<-96)buttons|=1;
+ if(state.y>96)buttons|=2;
+ if(state.x<-96)buttons|=4;
+ if(state.x>96)buttons|=8;
+ return buttons;
+}
+static WORD splitBoundMenuAction(const NativeMap& map,const WORD* actions,unsigned count,int scanCode){
+ if(map.count!=count||!writableMemory(map.actions,count*sizeof(NativeAction)))return 0;
+ WORD result=0;
+ for(unsigned i=0;i<count;i++)for(const auto& binding:map.actions[i].binding){
+  if(binding.device==8&&binding.object==scanCode)result|=actions[i];
+ }
+ return result;
+}
+static WORD splitLegacyMenuExtras(const NativeMap& keyboard,bool sm3){
+ // These are the action-index translations used by the original menu poll
+ // when it reads controller bindings from each player's battle map.
+ static constexpr WORD sm3Actions[]={1,2,4,8,0x30,0,0,0,0x100,0x200,0,0x800,0,0,0x4000,0x8000};
+ static constexpr WORD sm4Actions[]={1,2,4,8,0x30,0,0x40,0x80,0,0x200,0x400,0x800,0x1000,0x2000,0,0};
+ const WORD* actions=sm3?sm3Actions:sm4Actions;
+ WORD result=0;
+ if(GetAsyncKeyState(VK_TAB)&0x8000)result|=sm3?0x800:0x200;
+ if(GetAsyncKeyState(VK_SPACE)&0x8000)result|=0x10;
+ if(GetAsyncKeyState('J')&0x8000)result|=splitBoundMenuAction(keyboard,actions,16,DIK_J);
+ if(GetAsyncKeyState('I')&0x8000)result|=splitBoundMenuAction(keyboard,actions,16,DIK_I);
+ if(GetAsyncKeyState(VK_LSHIFT)&0x8000)result|=splitBoundMenuAction(keyboard,actions,16,DIK_LSHIFT);
+ if(GetAsyncKeyState(VK_RSHIFT)&0x8000)result|=splitBoundMenuAction(keyboard,actions,16,DIK_RSHIFT);
+ return result;
+}
+static bool splitMenuExtraScanCode(int scanCode){
+ return scanCode==DIK_TAB||scanCode==DIK_SPACE||scanCode==DIK_J||scanCode==DIK_I||
+        scanCode==DIK_LSHIFT||scanCode==DIK_RSHIFT;
+}
+static WORD splitKeyboardActions(WORD actions,WORD gated,bool secondCursor,bool ready){
  if(!secondCursor)return 0;
- return (directions&15)|(ready?confirmCancel:0);
+ return ready?actions:actions&~gated;
 }
 static bool nativeDirectionsUse(const NativeMap& map,int device){
  if(map.count!=16||!writableMemory(map.actions,4*sizeof(NativeAction)))return false;
- for(unsigned i=0;i<4;i++)if(map.actions[i].binding[0].device!=device)return false;
+ for(unsigned i=0;i<4;i++){
+  bool found=false;
+  for(const auto& binding:map.actions[i].binding)if(binding.device==device){found=true;break;}
+  if(!found)return false;
+ }
  return true;
 }
 static void replaceSplitActionWord(unsigned player,unsigned kind,WORD mask,WORD value){
@@ -123,48 +167,123 @@ static void replaceSplitActionWord(unsigned player,unsigned kind,WORD mask,WORD 
  const unsigned shift=profile.packedActions?player*16:0;
  word[offset]=(word[offset]&~(DWORD(mask)<<shift))|(DWORD(value&mask)<<shift);
 }
+static int __cdecl runSplitCharPlayer(int player){
+ const bool previous=splitCharP1Ready;
+ // Mode 1 opens 2P with 1P's existing selection. Mode 2 enters the
+ // same player loop after 1P confirms and the native join check passes.
+ splitCharP1Ready=(splitCharMode==1||splitCharMode==2)&&player==1;
+ if(splitCharP1Ready)splitSecondJoined=true;
+ if(splitCharP1Ready){
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  // The selector can read the previous frame before polling 2P input.
+  if(controllerTakeover&&armed&&wasConnected&&foreground()){
+   for(unsigned kind=0;kind<3;kind++)replaceSplitActionWord(1,kind,0xffff,0);
+  }
+ }
+ const int result=originalCharPlayer(player);
+ splitCharP1Ready=previous;
+ return result;
+}
 static void applySplitMenuActions(bool secondCursor, bool firstReady){
- if(!splitSourcesReady||!nativeSplitJoined())return;
+ // 1P owns public menus as soon as the controller is armed. The native
+ // joined flag only gates the separate 2P cursor and its confirm/back keys.
+ if(!splitSourcesReady)return;
  const auto& profile=*splitProfile;
  const WORD buttons=profile.confirm|profile.cancel;
+ const WORD gated=buttons|0x30;
  const WORD firstMask=15|buttons;
  // Preserve 1P's other native menu buttons. The shared map contributes no
  // actions to 2P, whose cursor and confirmation use only physical keyboard.
  replaceSplitActionWord(0,0,firstMask,splitPadKeys.held);
  replaceSplitActionWord(0,1,firstMask,splitPadKeys.pressed);
  replaceSplitActionWord(0,2,firstMask,splitPadKeys.repeated);
- replaceSplitActionWord(1,0,0xffff,splitKeyboardActions(splitKeyboardKeys.held,splitKeyboardKeys.held&buttons,secondCursor,firstReady));
- replaceSplitActionWord(1,1,0xffff,splitKeyboardActions(splitKeyboardKeys.pressed,splitKeyboardKeys.pressed&buttons,secondCursor,firstReady));
- replaceSplitActionWord(1,2,0xffff,splitKeyboardActions(splitKeyboardKeys.repeated,splitKeyboardKeys.repeated&buttons,secondCursor,firstReady));
+ const bool secondEnabled=secondCursor&&nativeSplitJoined();
+ if(secondEnabled){
+  replaceSplitActionWord(1,0,0xffff,splitKeyboardActions(splitKeyboardKeys.held,gated,true,firstReady));
+  replaceSplitActionWord(1,1,0xffff,splitKeyboardActions(splitKeyboardKeys.pressed,gated,true,firstReady));
+  replaceSplitActionWord(1,2,0xffff,splitKeyboardActions(splitKeyboardKeys.repeated,gated,true,firstReady));
+ }
 }
 static void __cdecl readSplitMenuInputs(){
- bool swapPlayers=false;
+ std::lock_guard<std::recursive_mutex> lock(mutex);
  NativeMap* maps=(NativeMap*)(splitBase+splitProfile->playerMaps);
- {
-  std::lock_guard<std::recursive_mutex> lock(mutex);
-  // The game keeps per-player bindings in its own configuration. When the
-  // saved assignments are reversed, swap only for this gameplay input poll.
-  const bool haveOwner=controllerTakeover&&armed&&wasConnected&&nativeSplitJoined()&&foreground();
-  const bool menu=insideSplitPrepareScreen||splitCharMode>=0||nativeCommonMenu();
-  InterlockedExchange(&nativeSplitMenuActive,haveOwner&&menu);
-  swapPlayers=haveOwner&&!menu&&
-    nativeDirectionsUse(maps[0],8)&&nativeDirectionsUse(maps[1],0);
+ const bool haveOwner=controllerTakeover&&armed&&wasConnected&&foreground();
+ // The legacy mode word is zero in both the title menu and short battle
+ // transitions on some SM4 builds. Require the renderer's menu scene bit as
+ // a second signal so a battle frame cannot be routed as a public menu.
+ const bool menu=insideSplitPrepareScreen||splitCharMode>=0||
+                 (nativeCommonMenu()&&menuSceneActive);
+ const bool secondCursor=(insideSplitPrepareScreen||splitCharP1Ready)&&nativeSplitJoined();
+ InterlockedExchange(&nativeSplitMenuActive,haveOwner&&menu);
+ InterlockedExchange(&nativeSecondMenuActive,haveOwner&&menu&&secondCursor);
+ const bool reversed=nativeDirectionsUse(maps[0],8)&&nativeDirectionsUse(maps[1],0);
+ if(logging&&!splitMapFingerprintLogged){
+  splitMapFingerprintLogged=true;
+  logf("split map fingerprint maps=%p/%p count=%lu/%lu d00=%d/%d d01=%d/%d d10=%d/%d d11=%d/%d joined=%d menu=%d reversed=%d",
+       maps[0].actions,maps[1].actions,maps[0].count,maps[1].count,
+       maps[0].actions?maps[0].actions[0].binding[0].device:-1,maps[0].actions?maps[0].actions[0].binding[0].object:-1,
+       maps[0].actions?maps[0].actions[1].binding[0].device:-1,maps[0].actions?maps[0].actions[1].binding[0].object:-1,
+       maps[1].actions?maps[1].actions[0].binding[0].device:-1,maps[1].actions?maps[1].actions[0].binding[0].object:-1,
+       maps[1].actions?maps[1].actions[1].binding[0].device:-1,maps[1].actions?maps[1].actions[1].binding[0].object:-1,
+       nativeSplitJoined()?1:0,menu?1:0,reversed?1:0);
+ }
+ // The native mode words are transient and are zero during some battle
+ // transitions. The player maps themselves are the stable role fingerprint,
+ // so do not gate the handoff on those words or P2 can lose all attacks for a
+ // frame or for an entire stage.
+ const bool swapPlayers=haveOwner&&!menu&&reversed;
+ NativeAction firstBattleActions[16],secondBattleActions[16];
+ NativeAction* firstBattleOriginal=nullptr;
+ NativeAction* secondBattleOriginal=nullptr;
+ auto& commonMap=maps[2];
+ NativeAction commonActions[16];
+ NativeAction* commonOriginal=nullptr;
+ if(haveOwner&&menu&&secondCursor&&commonMap.count==16&&writableMemory(commonMap.actions,sizeof(commonActions))){
+  // Keep native controller bindings available to 1P while 2P uses the
+  // physical extras on their own character/preparation page.
+  commonOriginal=commonMap.actions;
+  memcpy(commonActions,commonOriginal,sizeof(commonActions));
+  for(auto& action:commonActions)for(auto& binding:action.binding){
+   if(binding.device==8&&splitMenuExtraScanCode(binding.object))binding.device=10;
+  }
+  commonMap.actions=commonActions;
  }
  if(swapPlayers)std::swap(maps[0],maps[1]);
+ if(haveOwner&&!menu){
+  // The native maps can contain two bindings per action. After the player
+  // roles are swapped, remove the opposite device from each temporary map so
+  // 2P keyboard actions cannot also fire 1P and vice versa.
+  if(maps[0].count==16&&writableMemory(maps[0].actions,sizeof(firstBattleActions))){
+   firstBattleOriginal=maps[0].actions;memcpy(firstBattleActions,firstBattleOriginal,sizeof(firstBattleActions));
+   for(auto& action:firstBattleActions)for(auto& binding:action.binding)
+    if(binding.device==8)binding.device=10;
+   maps[0].actions=firstBattleActions;
+  }
+  if(maps[1].count==16&&writableMemory(maps[1].actions,sizeof(secondBattleActions))){
+   secondBattleOriginal=maps[1].actions;memcpy(secondBattleActions,secondBattleOriginal,sizeof(secondBattleActions));
+   for(auto& action:secondBattleActions)for(auto& binding:action.binding)
+    if(binding.device>=0&&binding.device<8)binding.device=10;
+   maps[1].actions=secondBattleActions;
+  }
+ }
  originalSplitPoll();
+ if(secondBattleOriginal)maps[1].actions=secondBattleOriginal;
+ if(firstBattleOriginal)maps[0].actions=firstBattleOriginal;
  if(swapPlayers)std::swap(maps[0],maps[1]);
- std::lock_guard<std::recursive_mutex> lock(mutex);
- if(!controllerTakeover||!nativeSplitJoined()||!foreground()){
+ if(commonOriginal)commonMap.actions=commonOriginal;
+ if(!controllerTakeover||!foreground()){
   splitSourcesReady=false;
   splitPadKeys={};splitKeyboardKeys={};
+  InterlockedExchange(&nativeSecondMenuActive,0);
   return;
  }
  const auto state=sample();
- if(!armed||!wasConnected){splitSourcesReady=false;InterlockedExchange(&nativeSplitMenuActive,0);return;}
+ if(!armed||!wasConnected){splitSourcesReady=false;InterlockedExchange(&nativeSplitMenuActive,0);InterlockedExchange(&nativeSecondMenuActive,0);return;}
  const auto& profile=*splitProfile;
  const auto now=GetTickCount64();
- const auto keyboard=splitKeyboardState(profile.confirm,profile.cancel);
- const auto pad=splitPadState(state,(WORD)lastPadButtons,profile.confirm,profile.cancel);
+ const WORD keyboard=(WORD)(splitKeyboardState(profile.confirm,profile.cancel)|
+                            splitLegacyMenuExtras(maps[reversed?0:1],profile.packedActions));
+ const WORD pad=splitPadState(state,(WORD)lastPadButtons,profile.confirm,profile.cancel);
  if(!splitSourcesReady){
   // A key held while joining or regaining focus is not a new confirm edge.
   splitKeyboardKeys.held=keyboard;splitPadKeys.held=pad;
@@ -173,11 +292,20 @@ static void __cdecl readSplitMenuInputs(){
  splitSourcesReady=true;
  splitKeyboardKeys.update(keyboard,now);
  splitPadKeys.update(pad,now);
+ const bool battle=haveOwner&&!menu;
+ const bool firstReady=battle||splitCharP1Ready||(splitPrepareReadyBits&&(*splitPrepareReadyBits&1)!=0);
  if(nativeCommonMenu()||insideSplitPrepareScreen||splitCharMode>=0){
   InterlockedExchange(&nativeSplitMenuActive,1);
-  const bool secondCursor=insideSplitPrepareScreen||splitCharMode>0;
-  const bool firstReady=splitCharP1Ready||(splitPrepareReadyBits&&(*splitPrepareReadyBits&1)!=0);
   applySplitMenuActions(secondCursor,firstReady);
+ }
+ if(logging&&(splitLastJoined!=(nativeSplitJoined()?1:0)||splitLastMenu!=(menu?1:0))){
+  splitLastJoined=nativeSplitJoined()?1:0;splitLastMenu=menu?1:0;
+  const DWORD* p1=(const DWORD*)(splitBase+splitProfile->player1Actions);
+  const DWORD* p2=(const DWORD*)(splitBase+splitProfile->player2Actions);
+  logf("split state joined=%d menu=%d owner=%d second=%d ready=%d actions=%08lx/%08lx/%08lx p2=%08lx/%08lx/%08lx",
+       splitLastJoined,splitLastMenu,haveOwner?1:0,secondCursor?1:0,firstReady?1:0,
+       p1[0],p1[profile.packedActions?1:2],p1[profile.packedActions?2:3],
+       p2[0],p2[profile.packedActions?1:2],p2[profile.packedActions?2:3]);
  }
 }
 static void __cdecl prepareSplitMenuInputs(const DWORD* readyBits){

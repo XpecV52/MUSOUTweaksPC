@@ -6,7 +6,7 @@ import hashlib
 from release import GAMES
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'V1.0.5-rc3'
+VERSION = 'V1.0.5'
 OUT = ROOT / '_rel' / f'MUSOUTweaksPC_{VERSION}.zip'
 
 def add(archive, name, data):

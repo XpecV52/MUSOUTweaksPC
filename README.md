@@ -85,7 +85,7 @@ XInput 与原生 Sony DS4 手柄转成游戏能识别的虚拟 DirectInput 手�
 
 ## 配置
 
-所有 INI **每一条都有中文和英文注释**，键名保留英文。修改后需完全退出并重新启动游戏。缺项自动取默认值，超范围数值会被夹到有效区间。
+所有新增 INI 配置项都有中文和英文注释，键名保留英文。修改后需完全退出并重新启动游戏。缺项自动取默认值，超范围数值会被夹到有效区间。
 
 - **日志默认全关**：`log=0`。需要排障时改成 `log=1` 才会生成 `MUSOUTweaksPC.log`。
 - `[padfix]`：`enable` 手柄适配总开关，`backend` 选择自动/XInput/原生 DS4，`dpad_*` 控制十字键行为，其余为摇杆死区、扳机阈值、连接保护。
@@ -109,6 +109,24 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 真三6 DX 繁体版附带的 MOD 来源与授权见 `THIRD_PARTY_MODS.md`。
 
 ## 更新记录
+
+### V1.0.5
+
+本版整理为正式发布包。默认 `controller_takeover=1` 时，1P手柄接管公共菜单确认/返回，2P只使用自己的键盘或第二手柄；将其设为 `0` 会完整恢复游戏原生的1P键盘、2P手柄和右侧键盘分配，不安装新增的双人菜单接管路由，也不过滤公共菜单按键。
+
+This release is the cleaned V1.0.5 bundle. With `controller_takeover=1`, the first player's pad owns global menu confirm/back and player two keeps a separate keyboard or controller source. Setting it to `0` restores the game's original keyboard/controller ownership and disables the added co-op menu routing and filtering.
+
+- 修复真三国无双3/4/5及其他合作菜单的1P/2P输入归属、确认返回和子菜单通道。
+- 修复 DirectInput 力反馈到 Xbox、DS4、DualSense 双马达的转换，并保留真三7原生输入，只增加震动桥接。
+- 修复无边框窗口任务栏激活后的焦点恢复，补充真三6DX视角组合键和真三5扳机/十字键路径。
+- 修复真三5短按方向和左摇杆菜单跳格，按住方向只在延迟后连发。
+- 配置文件和部署文档补齐中英文说明，发布包只保留最新二进制与配置。
+
+- Fixed first/second-player ownership, confirm/back routing, and child-menu paths across the supported co-op ports.
+- Added DirectInput force-feedback conversion for Xbox, DS4, and DualSense motors while keeping DW8's native input path.
+- Fixed taskbar focus restoration for borderless windows, added SSM6 DX camera shortcuts, and completed SM5 trigger/D-pad paths.
+- Fixed SM5 one-tap D-pad and left-stick menu skipping. Hold-to-repeat starts only after the configured delay.
+- Completed bilingual configuration and deployment documentation. The release bundle contains only the latest binaries and configs.
 
 ### 2.53-rc2（修复候选）
 
@@ -170,7 +188,7 @@ python package.py   :: 打包 build\dinput8.dll 与 dinput8-platform.dll
 
 ## 版本
 
-当前构建 **2.52**，对外发布版本 **V1.0.4**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
+当前构建 **2.53**，对外发布版本 **V1.0.5**。发布包名称、大小与 SHA-256 见 `RELEASES.md`。
 
 ---
 
@@ -259,7 +277,7 @@ Only the viewpoint moves: FOV, character proportions and HUD scale are preserved
 
 ## Configuration
 
-Every INI line carries **both Chinese and English comments**; key names stay in English. Restart the game after editing. Missing keys fall back to defaults and out-of-range values are clamped.
+Every newly added INI option carries **both Chinese and English comments**; key names stay in English. Restart the game after editing. Missing keys fall back to defaults and out-of-range values are clamped.
 
 - **Logging is off by default**: `log=0`. Set `log=1` only when you need `MUSOUTweaksPC.log` for troubleshooting.
 - `[padfix]`: `enable` master switch, `backend` auto/XInput/native DS4, `dpad_*` D-pad behaviour, plus deadzone, trigger threshold and connection guard.
@@ -283,6 +301,16 @@ python package.py   :: package both DLLs
 Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented in `THIRD_PARTY_MODS.md`.
 
 ## Changelog
+
+### V1.0.5
+
+This is the cleaned V1.0.5 release bundle. With `controller_takeover=1`, the first player's pad owns global menu confirm/back and player two keeps a separate keyboard or controller source. Setting it to `0` restores the game's original keyboard/controller ownership and disables the added co-op routing and filtering.
+
+- Fixed first/second-player ownership, confirm/back routing, and child-menu paths across the supported co-op ports.
+- Added DirectInput force-feedback conversion for Xbox, DS4, and DualSense motors while keeping DW8's native input path.
+- Fixed taskbar focus restoration for borderless windows, added SSM6 DX camera shortcuts, and completed SM5 trigger/D-pad paths.
+- Fixed SM5 one-tap D-pad and left-stick menu skipping. Hold-to-repeat starts only after the configured delay.
+- Completed bilingual configuration and deployment documentation. The release bundle contains only the latest binaries and configs.
 
 ### 2.52
 
@@ -334,4 +362,4 @@ Sources and licenses for the DW6 XL DX Traditional Chinese mods are documented i
 
 ## Version
 
-Current build: **2.52**; public release: **V1.0.4**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.
+Current build: **2.53**; public release: **V1.0.5**. Package names, sizes and SHA-256 are listed in `RELEASES.md`.

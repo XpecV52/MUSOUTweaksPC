@@ -9,11 +9,11 @@ import hashlib
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'V1.0.4'
+VERSION = 'V1.0.5'
 OUT = ROOT / '_rel'
 
 # Fixed timestamp so the archives are byte-reproducible across runs.
-STAMP = (2026, 11, 18, 0, 0, 0)
+STAMP = (2026, 11, 21, 0, 0, 0)
 
 # name, chinese title, english title, dll, ini, extra files (dst, src), tested game version
 GAMES = [
@@ -136,7 +136,19 @@ One sub-zip per game — extract only the one you need:
 「适配版本」是补丁实际验证过的游戏版本。补丁按可执行文件名和内存特征码识别，其他版本大概率也能用；换了版本后某个功能失效的话，把 ini 里的 `log` 改成 `1` 跑一次，日志会写明哪一步没匹配上。
 "Tested version" is the build each patch was verified against. Other builds will most likely work; if something stops working after an update, set `log=1` and the log says which step failed to match.
 
-## 相对 V1.0.3 的变化 / Changes since V1.0.3
+## 相对 V1.0.4 的变化 / Changes since V1.0.4
+
+- **完成 V1.0.5 输入接管整理。** `controller_takeover=1` 时1P手柄接管公共菜单确认/返回，2P保留自己的键盘或第二手柄动作位；设为 `0` 时恢复游戏原生输入分配，不安装新增接管路由和键盘过滤。
+- **修复真三国无双3/4/5、真三6DX、战国2和蛇魔Z的双人菜单通道。** 选人、准备、商店、设置及子菜单按游戏状态分配1P和2P来源，保留TAB/J/I/空格/Shift等原生动作键。
+- **修复真三5方向短按跳格。** 独立记录按住、按下和连发状态，十字键与左摇杆一次移动只生成一个菜单边沿，长按达到延迟后才重复。
+- **统一震动桥接。** Xbox、DS4和DualSense的DirectInput力反馈转换为双马达输出，真三7仍保留Platform-only原生输入路径。
+- **整理配置与发布文件。** 所有新增配置项补充中英文注释，清理旧候选包和调试产物，发布包只包含当前二进制、配置和必要第三方组件。
+
+- **Input takeover cleanup.** With `controller_takeover=1`, the first player's pad owns global menu confirm/back while player two keeps separate keyboard/controller action words. With `0`, native game ownership is restored and the added routing/filtering is not installed.
+- **Co-op menu routing.** SSM3/SSM4/SSM5/SSM6 DX/SW2/Orochi Z now route selector, preparation, shop, settings, and child-menu input by the game's player state while preserving TAB/J/I/Space/Shift actions.
+- **SM5 short-press fix.** Held, pressed, and repeated states are tracked independently, so a D-pad or left-stick tap produces one menu edge and long-press repeat starts only after the configured delay.
+- **Force-feedback bridge.** Xbox, DS4, and DualSense DirectInput effects are converted to dual-motor output. DW8 keeps the platform-only native input path.
+- **Release cleanup.** New bilingual comments cover every added configuration item. Old candidate archives and debug outputs are removed from the release workspace.
 
 - **新增真三国无双3 小地图放大。** 这一作的小地图只有 104×128 像素（分屏时每个视口各一块），补丁在 D3D9 里把**每帧采样 410×440 地图图集的最大那个屏幕空间四边形**认作底图，复制顶点、以右上角为锚点等比放大后提交副本，默认 **160%**。地图上的单位点、玩家箭头、据点图标是各自单独提交的小四边形，会被匹配到所在视口的地图矩形、用同一套变换一起放大，底图与标记点始终同步；单人模式与上下分屏都生效。游戏自己的顶点缓冲不改，其他 HUD 不受影响。
 - 新增小地图热键：**`Ctrl+Alt+F2` 放大 / `Ctrl+Alt+F3` 缩小**，每次 10%，范围 80–320%，按住可连调，新值立即写回 `minimap_scale`。新增配置项 `minimap_scale`、`minimap_hotkeys`、`minimap_surface_width` / `minimap_surface_height`（后两个是地图纹理尺寸指纹，换语言版本时可调）。

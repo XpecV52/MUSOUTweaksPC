@@ -1,8 +1,10 @@
+# 战国2安装脚本。自动替换旧 DLL 并保留可恢复的时间戳备份。
+# SW2 installer. Replaces the old DLL and keeps a timestamped rollback backup.
 param([string]$GameDir = 'E:\Games\Non-Steam\Sengoku Musou 2')
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $target = (Resolve-Path -LiteralPath $GameDir).Path
-if (-not (Test-Path -LiteralPath (Join-Path $target 'SW2.exe'))) { throw 'SW2.exe was not found in the target directory.' }
+if (-not (Test-Path -LiteralPath (Join-Path $target 'SW2.exe'))) { throw '目标目录找不到 SW2.exe / SW2.exe was not found in the target directory.' }
 $running = Get-Process -Name SW2 -ErrorAction SilentlyContinue
 if ($running) {
     $localProxyLoaded = $false
@@ -45,6 +47,6 @@ try {
     }
     throw
 }
-Write-Output "Installed in: $target"
-Write-Output "Backup: $backup"
-Write-Output 'The existing dinput8.dll.2.5-ime-only file was left untouched.'
+Write-Output "已安装 / Installed in: $target"
+Write-Output "备份 / Backup: $backup"
+Write-Output '已保留原有 dinput8.dll.2.5-ime-only 文件。 / The existing dinput8.dll.2.5-ime-only file was left untouched.'

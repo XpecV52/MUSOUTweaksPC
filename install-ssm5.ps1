@@ -1,12 +1,14 @@
+# 真三5专用安装脚本。自动替换旧 DLL，保留配置并创建回滚备份。
+# SM5 installer. Replaces the old DLL, preserves the config, and creates a rollback backup.
 param([string]$GameDir = 'E:\Games\Non-Steam\Shin Sangokumusou 5')
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $target = (Resolve-Path -LiteralPath $GameDir).Path
 if (-not (Test-Path -LiteralPath (Join-Path $target 'SM5_WIN.exe'))) {
-    throw 'SM5_WIN.exe was not found. Point -GameDir at the folder that holds it.'
+    throw '找不到 SM5_WIN.exe，请把 -GameDir 指向游戏目录 / SM5_WIN.exe was not found. Point -GameDir at the game folder.'
 }
 $running = Get-Process -Name @('SM5_WIN') -ErrorAction SilentlyContinue
-if ($running) { throw "Exit the game before installing: $($running.ProcessName -join ', ')" }
+if ($running) { throw "请先退出游戏 / Exit the game before installing: $($running.ProcessName -join ', ')" }
 $installFiles = @([pscustomobject]@{ source='build\dinput8.dll'; name='dinput8.dll' })
 $configPath = Join-Path $target 'SSM5_Tweaks.ini'
 if (-not (Test-Path -LiteralPath $configPath)) {
@@ -41,6 +43,6 @@ try {
     }
     throw
 }
-Write-Output "Installed in: $target"
-Write-Output "Backup: $backup"
-Write-Output 'Launch the game normally. The patch supplies a virtual controller named "Controller (XBOX 360 For Windows)" because DW6 PC only accepts the pad names on its built-in list.'
+Write-Output "已安装 / Installed in: $target"
+Write-Output "备份 / Backup: $backup"
+Write-Output '请正常启动游戏。由于真三5只接受内置名单中的手柄名，补丁将虚拟手柄报告为 Controller (XBOX 360 For Windows)。 / Launch the game normally. The patch reports Controller (XBOX 360 For Windows) because DW6 PC only accepts its built-in pad names.'
