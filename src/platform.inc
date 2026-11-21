@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <cwchar>
 #include <cctype>
+#include <array>
 #ifndef PADFIX_PLATFORM_ONLY
 extern "C" void sw2ResolutionInitialize(void);
 #endif
@@ -33,6 +34,7 @@ static int internalRenderWidth=0,internalRenderHeight=0;
 static bool singlePresentMode=true;
 static bool ssm7ResolutionPatched=false,cameraTweakActive=false;
 static void patchSsm7Resolution();
+static void patchSsm6Camera();
 static void patchSsm7Camera();
 static void patchOrochiCamera();
 static void pollCameraHotkeys();
@@ -814,6 +816,9 @@ static void pacePresentation() {
 static ULONG WINAPI platformRelease(void* object) {
  auto fn=(ULONG(WINAPI*)(void*))originalMethod(object,2);if(!fn||fn==platformRelease)return 0;
  ULONG refs=fn(object);
+#ifdef PADFIX_PLATFORM_ONLY
+ if(!refs)releasePlatformInputDevice(object);
+#endif
  if(!refs){releaseScaleSurface(object);releaseNativeOutputChain(object);std::lock_guard<std::mutex> lock(tableMutex);renderDevices.erase(object);logicalRenderSizes.erase(object);nativeOutputDevices.erase(object);loggedNativeViewports.erase(object);loggedNativeScissors.erase(object);loggedPrimaryPresentParameters.erase(object);}
  return refs;
 }
@@ -1019,6 +1024,13 @@ static HRESULT WINAPI platformCreateDepthStencilSurface(IDirect3DDevice9* d,UINT
 static HRESULT WINAPI platformPresent(IDirect3DDevice9* d,const RECT* source,const RECT* destination,HWND overrideWindow,const RGNDATA* dirty) {
  if(presentReentry){reportReentry("Present");return D3D_OK;}
  ReentryGuard guard(presentReentry);
+ startControllerWorker();
+#ifndef PADFIX_PLATFORM_ONLY
+ installSw2InputRouting();
+ installPackedGameMenuRouting();
+#else
+ installSsm7RumbleFallback();
+#endif
  pollCameraHotkeys();
  pollMinimapHotkeys();
  // The minimap rectangles are rediscovered every frame by the base-map quads;
@@ -1157,7 +1169,7 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  if(SUCCEEDED(hr)&&*out){
   // The minimap hotkeys are polled from Present, so that hook is needed even
   // when no other feature is active.
-  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture||minimapHotkeys)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d minimap_hotkeys=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture,minimapHotkeys);}
+  if(ours&&(nativeResolution||fpsLimit>0||cameraTweakActive||nativeOutput||frameCapture||minimapHotkeys||menuDetect)){hookMethod(*out,17,(void*)platformPresent);logf("D3D9 Present hook installed fps_limit=%d single_present=%d secondary_chain=%d capture=%d minimap_hotkeys=%d",fpsLimit,singlePresentMode,nativeOutput,frameCapture,minimapHotkeys);}
   if(ours)installMenuDetectHooks(*(void***)*out);
   if(ours){
    UINT logicalW=requestedW,logicalH=requestedH;
@@ -1180,7 +1192,7 @@ static HRESULT WINAPI platformCreateDevice(IDirect3D9* d,UINT adapter,D3DDEVTYPE
  return hr;
 }
 static IDirect3D9* WINAPI platformCreateD3D(UINT sdk) {
- initializeAll();patchSsm7Resolution();patchSsm7Camera();patchOrochiCamera();logf("Direct3DCreate9 hook entered fps_limit=%d borderless=%d",fpsLimit,windowMode);
+ initializeAll();patchSsm7Resolution();patchSsm6Camera();patchSsm7Camera();patchOrochiCamera();logf("Direct3DCreate9 hook entered fps_limit=%d borderless=%d",fpsLimit,windowMode);
  IDirect3D9* d=realCreateD3D?realCreateD3D(sdk):nullptr;
  if(d&&(windowMode||fpsLimit>0||cameraTweakActive))hookMethod(d,16,(void*)platformCreateDevice);return d;
 }
@@ -1296,7 +1308,7 @@ static DWORD WINAPI lateD3DPresentWatch(void*) {
  device->Release();DestroyWindow(probe);api->Release();return 0;
 }
 static bool attachLateD3DPresentHook() {
- if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0&&!minimapHotkeys))return false;
+ if(lateD3DHookAttempted||(!windowMode&&fpsLimit<=0&&!minimapHotkeys&&!menuDetect))return false;
  // DW3/DW4's Direct3DCreate9 entry point is imported and hooked before the
  // games create their devices. The extra probe/heap scan is redundant here;
  // it had started immediately before the recorded DW4 startup stack overflow.
@@ -1326,6 +1338,7 @@ static bool constantGetter(BYTE* base,DWORD rva,int value) {
 struct Ssm7CameraVector {float x,y,z;};
 using Ssm7LookAtFn=D3DMATRIX*(WINAPI*)(D3DMATRIX*,const Ssm7CameraVector*,const Ssm7CameraVector*,const Ssm7CameraVector*);
 static Ssm7LookAtFn realSsm7LookAt=nullptr;
+static Ssm7LookAtFn realSsm6LookAt=nullptr;
 static volatile LONG cameraDistancePercent=100,cameraPollBusy=0;
 static DWORD cameraSettingsTick=0;
 static int cameraHotkeys=1,cameraStep=5,cameraModifiers=3;
@@ -1387,6 +1400,49 @@ static D3DMATRIX* WINAPI ssm7CameraLookAt(D3DMATRIX* matrix,const Ssm7CameraVect
  const Ssm7CameraVector adjusted={target->x+(eye->x-target->x)*scale,target->y+(eye->y-target->y)*scale,target->z+(eye->z-target->z)*scale};
  return realSsm7LookAt(matrix,&adjusted,target,up);
 }
+static D3DMATRIX* WINAPI ssm6CameraLookAt(D3DMATRIX* matrix,const Ssm7CameraVector* eye,const Ssm7CameraVector* target,const Ssm7CameraVector* up) {
+ if(!realSsm6LookAt)return nullptr;
+ const int percent=(int)InterlockedCompareExchange(&cameraDistancePercent,0,0);
+ if(percent==100||!eye||!target)return realSsm6LookAt(matrix,eye,target,up);
+ const float scale=percent/100.0f;
+ const Ssm7CameraVector adjusted={target->x+(eye->x-target->x)*scale,target->y+(eye->y-target->y)*scale,target->z+(eye->z-target->z)*scale};
+ return realSsm6LookAt(matrix,&adjusted,target,up);
+}
+static void** findImportSlot(const char* module,const char* function) {
+ BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
+ if(!base)return nullptr;
+ auto* dos=(IMAGE_DOS_HEADER*)base;
+ auto* nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);
+ const auto& directory=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+ if(!directory.VirtualAddress)return nullptr;
+ auto* imports=(IMAGE_IMPORT_DESCRIPTOR*)(base+directory.VirtualAddress);
+ for(;imports->Name;imports++){
+  const char* name=(const char*)(base+imports->Name);
+  if(_stricmp(name,module))continue;
+  auto* thunk=(IMAGE_THUNK_DATA*)(base+imports->FirstThunk);
+  auto* original=(IMAGE_THUNK_DATA*)(base+imports->OriginalFirstThunk);
+  for(;thunk->u1.Function;thunk++,original++){
+   if(IMAGE_SNAP_BY_ORDINAL(original->u1.Ordinal))continue;
+   auto* imported=(IMAGE_IMPORT_BY_NAME*)(base+original->u1.AddressOfData);
+   if(!strcmp((const char*)imported->Name,function))return (void**)&thunk->u1.Function;
+  }
+ }
+ return nullptr;
+}
+static void patchSsm6Camera() {
+ if(cameraTweakActive||!isSsm6DxExecutable(gameExeName))return;
+ void** slot=findImportSlot("d3dx9_43.dll","D3DXMatrixLookAtRH");
+ // The IAT is normally read-only. VirtualProtect below is the intended
+ // write path, so a writable-memory precheck prevented this hook from
+ // installing on the stock SM6 DX executable.
+ if(!slot)return;
+ DWORD old=0;if(!VirtualProtect(slot,sizeof(void*),PAGE_READWRITE,&old))return;
+ realSsm6LookAt=(Ssm7LookAtFn)*slot;
+ InterlockedExchangePointer(slot,(void*)ssm6CameraLookAt);
+ DWORD discard;VirtualProtect(slot,sizeof(void*),old,&discard);
+ readCameraSettings();cameraTweakActive=true;
+ logf("SSM6 DX 3D camera distance installed; camera_distance_percent=50..300, live INI reload");
+}
 static void patchSsm7Camera() {
  if(cameraTweakActive||_stricmp(gameExeName,"Launch.exe"))return;
  BYTE* base=(BYTE*)GetModuleHandleA(nullptr);
@@ -1435,16 +1491,17 @@ static uintptr_t __cdecl orochiRendererCamera(BYTE* renderer,BYTE* camera) {
  if(changed)memcpy(camera+0x1c0,saved,sizeof(saved));
  return result;
 }
-static bool buildOrochiCameraTrampoline(BYTE* site,const BYTE* expected,SIZE_T size,void* hook,void** original) {
- if(memcmp(site,expected,size))return false;
+static bool buildInlineTrampoline(BYTE* site,const BYTE* expected,SIZE_T size,void* hook,void** original) {
+ if(size<5||memcmp(site,expected,size))return false;
  BYTE* code=(BYTE*)VirtualAlloc(nullptr,size+5,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);
  if(!code)return false;
  // These verified prologues contain only stack/register instructions.
  memcpy(code,expected,size);code[size]=0xe9;
  LONG back=(LONG)((site+size)-(code+size+5));memcpy(code+size+1,&back,4);
- BYTE jump[8]={0xe9,0,0,0,0,0x90,0x90,0x90};LONG forward=(LONG)((BYTE*)hook-(site+5));memcpy(jump+1,&forward,4);
+ std::vector<BYTE> jump(size,0x90);
+ jump[0]=0xe9;LONG forward=(LONG)((BYTE*)hook-(site+5));memcpy(jump.data()+1,&forward,4);
  *original=code;FlushInstructionCache(GetCurrentProcess(),code,size+5);
- if(!replaceCode(site,expected,size,jump,size)){VirtualFree(code,0,MEM_RELEASE);*original=nullptr;return false;}
+ if(!replaceCode(site,expected,size,jump.data(),size)){VirtualFree(code,0,MEM_RELEASE);*original=nullptr;return false;}
  DWORD old;VirtualProtect(code,size+5,PAGE_EXECUTE_READ,&old);return true;
 }
 static void patchOrochiCamera() {
@@ -1453,8 +1510,8 @@ static void patchOrochiCamera() {
  const BYTE projection[]={0x83,0xec,0x74,0x53,0x8b,0x5c,0x24,0x7c};
  const BYTE renderer[]={0x83,0xec,0x30,0x56,0x8b,0x74,0x24,0x3c};
  if(memcmp(base+0xf9c70,projection,sizeof(projection))||memcmp(base+0xf9950,renderer,sizeof(renderer)))return;
- if(!buildOrochiCameraTrampoline(base+0xf9c70,projection,sizeof(projection),(void*)orochiCameraProjection,(void**)&originalOrochiProjection))return;
- if(!buildOrochiCameraTrampoline(base+0xf9950,renderer,sizeof(renderer),(void*)orochiRendererCamera,(void**)&originalOrochiRendererCamera))return;
+ if(!buildInlineTrampoline(base+0xf9c70,projection,sizeof(projection),(void*)orochiCameraProjection,(void**)&originalOrochiProjection))return;
+ if(!buildInlineTrampoline(base+0xf9950,renderer,sizeof(renderer),(void*)orochiRendererCamera,(void**)&originalOrochiRendererCamera))return;
  readCameraSettings();cameraTweakActive=true;
  logf("Orochi player camera distance installed: CPU projection + renderer; preparation map excluded");
 }
@@ -1611,9 +1668,9 @@ static void platformConfigure() {
  // Menu-only D-pad arrow injection. Sengoku Musou 2 takes both its menu cursor
  // and its character movement from the same keyboard path, so the arrows are
  // only injected while the frame contains no 3D scene.
- int menuDefault=!_stricmp(gameExeName,"SW2.exe")?1:0;
- menuDetect=std::clamp(opt("menu_inject_only",menuDefault),0,1);
- menuDrawThreshold=std::clamp(opt("menu_draw_threshold",300),0,4000);
+ int menuDefault=(int)GetPrivateProfileIntA("padfix","menu_inject_only",!_stricmp(gameExeName,"SW2.exe")?1:0,iniPath);
+ menuDetect=controllerTakeover||std::clamp(opt("menu_inject_only",menuDefault),0,1);
+ menuDrawThreshold=std::clamp(opt("menu_draw_threshold",(int)GetPrivateProfileIntA("padfix","menu_draw_threshold",300,iniPath)),0,4000);
  // Diagnostic: list every distinct screen-space quad the game submits, so a HUD
  // element (the SSM3 minimap) can be located from one run.
  quadProbe=std::clamp(opt("quad_probe",0),0,1);
@@ -1679,7 +1736,7 @@ static void platformConfigure() {
  logf("platform hooks=%d mask=%08lx shared=%d borderless=%d render=%dx%d native_render=%d scale_to_fill=%d scale_aspect_mode=%d scale_filter=%u single_present=%d IME=%d COM=%d close=%d fps_limit=%d",earlyHookCount,earlyHookMask,sharedInput,windowMode,renderWidth,renderHeight,nativeResolution,scaleToFill,scaleAspectMode,scaleFilter,singlePresentMode,imeIsolation,comCompatibility,quickClose,fpsLimit);
  attachExistingMainWindow();
  startMainWindowWatch();
- if(windowMode||fpsLimit>0||minimapHotkeys)attachLateD3DPresentHook();
+ if(windowMode||fpsLimit>0||minimapHotkeys||menuDetect)attachLateD3DPresentHook();
 }
 // The inherited GS sprite format stores Y in unsigned 12.4 fixed point
 // with a 2048-pixel bias. A 2160-pixel bottom edge wraps to -1936.
@@ -1760,18 +1817,38 @@ static void logKeyMessage(UINT message,WPARAM w,LPARAM l) {
  keyMsgSeen++;
  logf("window key message %u wparam=%02x lparam=%08lx (#%d)",message,(unsigned)w,(unsigned long)l,keyMsgSeen);
 }
+static void constrainBorderlessPosition(WINDOWPOS* pos){
+ if(!pos)return;
+ // Preserve activation and Z-order requests. Forcing HWND_NOTOPMOST on every
+ // activation inserts the window behind ordinary apps, so a taskbar click can
+ // never bring the game back above them.
+ if(!(pos->flags&SWP_NOZORDER)&&pos->hwndInsertAfter==HWND_TOPMOST)pos->hwndInsertAfter=HWND_TOP;
+ if(!IsIconic(pos->hwnd)){
+  pos->x=monitorBounds.left;pos->y=monitorBounds.top;
+  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
+  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE);
+ }
+}
+static bool blockKeyboardMenuMessage(UINT message,WPARAM key){
+ if(!controllerMenuActive()||GetMessageExtraInfo()==(LPARAM)0x4D55534F)return false;
+ if(message!=WM_KEYDOWN&&message!=WM_KEYUP&&message!=WM_CHAR&&message!=WM_SYSKEYDOWN&&message!=WM_SYSKEYUP&&message!=WM_SYSCHAR)return false;
+ if(key==VK_RETURN||key==VK_ESCAPE)return true;
+ if(!filterSplitKeyboardKeys())return false;
+ if((message==WM_CHAR||message==WM_SYSCHAR)&&key>='a'&&key<='z')key-='a'-'A';
+ return key=='W'||key=='A'||key=='S'||key=='D'||key=='K'||key=='L';
+}
 static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM l) {
+ if(blockKeyboardMenuMessage(message,w))return 0;
  logKeyMessage(message,w,l);
  if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
   STYLESTRUCT* style=(STYLESTRUCT*)l;
   if(w==GWL_STYLE)style->styleNew=(style->styleNew&~(DWORD)WS_OVERLAPPEDWINDOW)|WS_POPUP;
-  else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
+  else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST|WS_EX_NOACTIVATE);
  }
  if(windowMode&&h==gameWindow&&message==WM_WINDOWPOSCHANGING&&l){
-  WINDOWPOS* pos=(WINDOWPOS*)l;pos->x=monitorBounds.left;pos->y=monitorBounds.top;
-  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
-  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);pos->hwndInsertAfter=HWND_NOTOPMOST;
+  constrainBorderlessPosition((WINDOWPOS*)l);
  }
+ if(message==WM_MOUSEACTIVATE&&h==gameWindow)return MA_ACTIVATE;
  if(message==WM_CLOSE&&quickClose){logf("WM_CLOSE: normal destroy without confirmation");releaseAllScaleSurfaces();releaseAllNativeOutputChains();if(IsWindow(h))DestroyWindow(h);return 0;}
  if(message==WM_DESTROY)releaseAllNativeOutputChains();
  if(message==WM_DEVICECHANGE){std::lock_guard<std::recursive_mutex> lock(mutex);nextSourceScan=0;logf("WM_DEVICECHANGE: source rescan scheduled");}
@@ -1779,17 +1856,17 @@ static LRESULT CALLBACK platformWindowProcA(HWND h,UINT message,WPARAM w,LPARAM 
  return CallWindowProcA(gameWindowProc,h,message,w,l);
 }
 static LRESULT CALLBACK platformWindowProcW(HWND h,UINT message,WPARAM w,LPARAM l) {
+ if(blockKeyboardMenuMessage(message,w))return 0;
  logKeyMessage(message,w,l);
  if(windowMode&&h==gameWindow&&message==WM_STYLECHANGING&&l){
   STYLESTRUCT* style=(STYLESTRUCT*)l;
   if(w==GWL_STYLE)style->styleNew=(style->styleNew&~(DWORD)WS_OVERLAPPEDWINDOW)|WS_POPUP;
-  else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
+  else if(w==GWL_EXSTYLE)style->styleNew&=~(DWORD)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST|WS_EX_NOACTIVATE);
  }
  if(windowMode&&h==gameWindow&&message==WM_WINDOWPOSCHANGING&&l){
-  WINDOWPOS* pos=(WINDOWPOS*)l;pos->x=monitorBounds.left;pos->y=monitorBounds.top;
-  pos->cx=monitorBounds.right-monitorBounds.left;pos->cy=monitorBounds.bottom-monitorBounds.top;
-  pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);pos->hwndInsertAfter=HWND_NOTOPMOST;
+  constrainBorderlessPosition((WINDOWPOS*)l);
  }
+ if(message==WM_MOUSEACTIVATE&&h==gameWindow)return MA_ACTIVATE;
  if(message==WM_CLOSE&&quickClose){logf("WM_CLOSE: normal destroy without confirmation");releaseAllScaleSurfaces();releaseAllNativeOutputChains();if(IsWindow(h))DestroyWindow(h);return 0;}
  if(message==WM_DESTROY)releaseAllNativeOutputChains();
  if(message==WM_DEVICECHANGE){std::lock_guard<std::recursive_mutex> lock(mutex);nextSourceScan=0;logf("WM_DEVICECHANGE: source rescan scheduled");}
@@ -1834,7 +1911,7 @@ static void configureMainWindow(HWND h,bool unicode,int x,int y,int width,int he
  if(associateIme)associateIme(h,nullptr,0);
  if(windowMode){
   LONG_PTR style=GetWindowLongPtrA(h,GWL_STYLE);style=(style&~(LONG_PTR)WS_OVERLAPPEDWINDOW)|WS_POPUP;SetWindowLongPtrA(h,GWL_STYLE,style);
-  LONG_PTR exStyle=GetWindowLongPtrA(h,GWL_EXSTYLE);exStyle&=~(LONG_PTR)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);SetWindowLongPtrA(h,GWL_EXSTYLE,exStyle);
+  LONG_PTR exStyle=GetWindowLongPtrA(h,GWL_EXSTYLE);exStyle&=~(LONG_PTR)(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_TOPMOST|WS_EX_NOACTIVATE);SetWindowLongPtrA(h,GWL_EXSTYLE,exStyle);
   x=monitorBounds.left;y=monitorBounds.top;width=monitorBounds.right-x;height=monitorBounds.bottom-y;
   SetWindowPos(h,HWND_NOTOPMOST,x,y,width,height,SWP_FRAMECHANGED|SWP_NOACTIVATE);
  }
@@ -1948,7 +2025,7 @@ static HWND WINAPI platformCreateWindow(DWORD ex,LPCSTR cls,LPCSTR title,DWORD s
   logApartment("before window");
   if(disableIme)logf("ImmDisableIME before main window result=%d",disableIme((DWORD)-1));
   patchGraphics();ex&=~WS_EX_TOPMOST;
-  if(windowMode){ex&=~(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME);style=(style&~(WS_OVERLAPPEDWINDOW))|WS_POPUP;
+  if(windowMode){ex&=~(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_NOACTIVATE);style=(style&~(WS_OVERLAPPEDWINDOW))|WS_POPUP;
    x=monitorBounds.left;y=monitorBounds.top;width=monitorBounds.right-x;height=monitorBounds.bottom-y;}
  }
  HWND h=realCreateWindow?realCreateWindow(ex,cls,title,style,x,y,width,height,parent,menu,inst,param):nullptr;
@@ -1961,7 +2038,7 @@ static HWND WINAPI platformCreateWindowW(DWORD ex,LPCWSTR cls,LPCWSTR title,DWOR
   logApartment("before window");
   if(disableIme)logf("ImmDisableIME before main window result=%d",disableIme((DWORD)-1));
   patchGraphics();ex&=~WS_EX_TOPMOST;
-  if(windowMode){ex&=~(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME);style=(style&~(WS_OVERLAPPEDWINDOW))|WS_POPUP;
+  if(windowMode){ex&=~(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME|WS_EX_NOACTIVATE);style=(style&~(WS_OVERLAPPEDWINDOW))|WS_POPUP;
    x=monitorBounds.left;y=monitorBounds.top;width=monitorBounds.right-x;height=monitorBounds.bottom-y;}
  }
  HWND h=realCreateWindowW?realCreateWindowW(ex,cls,title,style,x,y,width,height,parent,menu,inst,param):nullptr;
@@ -1970,20 +2047,20 @@ static HWND WINAPI platformCreateWindowW(DWORD ex,LPCWSTR cls,LPCWSTR title,DWOR
 }
 static BOOL WINAPI platformSetWindowPos(HWND h,HWND after,int x,int y,int width,int height,UINT flags) {
  if(h==gameWindow){
-  if(after==HWND_TOPMOST)after=HWND_NOTOPMOST;
+  if(after==HWND_TOPMOST)after=HWND_TOP;
   if(windowMode){x=monitorBounds.left;y=monitorBounds.top;width=monitorBounds.right-x;height=monitorBounds.bottom-y;
-   flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);after=HWND_NOTOPMOST;}
+   flags&=~(SWP_NOMOVE|SWP_NOSIZE);}
  }
  return realSetWindowPos(h,after,x,y,width,height,flags);
 }
 static LONG WINAPI platformSetWindowLong(HWND h,int index,LONG value) {
- if(h==gameWindow){if(index==GWL_EXSTYLE)value&=~WS_EX_TOPMOST;
+  if(h==gameWindow){if(index==GWL_EXSTYLE)value&=~(WS_EX_TOPMOST|WS_EX_NOACTIVATE);
   if(windowMode&&index==GWL_STYLE)value=(value&~WS_OVERLAPPEDWINDOW)|WS_POPUP;
   if(windowMode&&index==GWL_EXSTYLE)value&=~(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME);}
  return realSetWindowLong?realSetWindowLong(h,index,value):0;
 }
 static LONG WINAPI platformSetWindowLongW(HWND h,int index,LONG value) {
- if(h==gameWindow){if(index==GWL_EXSTYLE)value&=~WS_EX_TOPMOST;
+  if(h==gameWindow){if(index==GWL_EXSTYLE)value&=~(WS_EX_TOPMOST|WS_EX_NOACTIVATE);
   if(windowMode&&index==GWL_STYLE)value=(value&~WS_OVERLAPPEDWINDOW)|WS_POPUP;
   if(windowMode&&index==GWL_EXSTYLE)value&=~(WS_EX_CLIENTEDGE|WS_EX_WINDOWEDGE|WS_EX_DLGMODALFRAME);}
  return realSetWindowLongW?realSetWindowLongW(h,index,value):0;
@@ -2036,6 +2113,12 @@ static HRESULT WINAPI platformCoInitializeLegacy(LPVOID reserved) {
 }
 static FARPROC WINAPI platformGetProcAddress(HMODULE module,LPCSTR name) {
  if(!realGetProcAddress)return nullptr;
+ if((ULONG_PTR)name>65535&&!_stricmp(gameExeName,"Launch.exe")){
+  char path[MAX_PATH]={};GetModuleFileNameA(module,path,MAX_PATH);const char* file=strrchr(path,'\\');file=file?file+1:path;
+  if(!_strnicmp(file,"xinput",6)){
+   if(!strcmp(name,"XInputSetState")){gameSetXState=(decltype(gameSetXState))realGetProcAddress(module,name);return (FARPROC)nativeSetState;}
+  }
+ }
  if((ULONG_PTR)name>65535&&module==GetModuleHandleA("d3d9.dll")&&!_stricmp(name,"Direct3DCreate9")){
   realCreateD3D=(decltype(realCreateD3D))realGetProcAddress(module,name);
   logf("dynamic API hook: d3d9!Direct3DCreate9");return (FARPROC)platformCreateD3D;
@@ -2086,7 +2169,11 @@ static void installDeferredGetProcHook() {
 }
 [[maybe_unused]] static void installEarlyHooks() {
  char exe[MAX_PATH]={};GetModuleFileNameA(nullptr,exe,MAX_PATH);const char* name=strrchr(exe,'\\');name=name?name+1:exe;
+ strcpy_s(gameExeName,name);
  deferGetProcHook=!_stricmp(name,"SW2.exe");
+ if(!_stricmp(name,"Launch.exe"))for(const char* dll:{"xinput1_4.dll","xinput1_3.dll","xinput9_1_0.dll"}){
+  patchImport(dll,"XInputSetState",(void*)nativeSetState,(void**)&gameSetXState);
+ }
  struct Entry{const char* dll;const char* name;void* hook;void** original;};
  Entry hooks[]={
   {"user32.dll","CreateWindowExA",(void*)platformCreateWindow,(void**)&realCreateWindow},

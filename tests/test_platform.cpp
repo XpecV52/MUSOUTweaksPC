@@ -13,7 +13,7 @@ int main(){
    auto stack=(DWORD*)c->Esp;for(int i=0;i<8;i++){HMODULE m=nullptr;char file[MAX_PATH]={};GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)stack[i],&m);if(m)GetModuleFileNameA(m,file,MAX_PATH);fprintf(stderr,"stack %d %08lx module=%s offset=%08lx\n",i,stack[i],file,stack[i]-(DWORD)m);}
   }return EXCEPTION_CONTINUE_SEARCH;
  });
- logging=false;windowMode=1;renderWidth=2560;renderHeight=1440;
+ logging=false;windowMode=1;renderWidth=2560;renderHeight=1440;forceNativeBuffer=true;
  D3DPRESENT_PARAMETERS p={};p.BackBufferWidth=640;p.BackBufferHeight=480;p.Windowed=FALSE;p.FullScreen_RefreshRateInHz=60;p.PresentationInterval=D3DPRESENT_INTERVAL_FOUR;
  forcePresentation(p);check(p.BackBufferWidth==2560&&p.BackBufferHeight==1440,"native resolution presentation");
  check(p.Windowed&&p.FullScreen_RefreshRateInHz==0&&p.PresentationInterval==D3DPRESENT_INTERVAL_ONE,"valid windowed D3D parameters");

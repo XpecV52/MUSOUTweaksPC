@@ -1,12 +1,14 @@
+# 蛇魔Z安装脚本。自动替换旧 DLL、保留配置并创建回滚备份。
+# Orochi Z installer. Replaces the old DLL, preserves the config, and creates a rollback backup.
 param([string]$GameDir = 'E:\Games\Non-Steam\Musou Orochi Z')
 $ErrorActionPreference = 'Stop'
 $target = (Resolve-Path -LiteralPath $GameDir).Path
-if (-not (Test-Path -LiteralPath (Join-Path $target 'OROCHI_Z_TC.exe'))) { throw 'Game executable was not found.' }
-if (Get-Process -Name OROCHI_Z_TC -ErrorAction SilentlyContinue) { throw 'Exit OROCHI_Z_TC normally before installing.' }
-$files = @('dinput8.dll', 'OrochiZPadX.ini', 'OrochiZPadX-diagnose.exe')
+if (-not (Test-Path -LiteralPath (Join-Path $target 'OROCHI_Z_TC.exe'))) { throw '找不到游戏主程序 / Game executable was not found.' }
+if (Get-Process -Name OROCHI_Z_TC -ErrorAction SilentlyContinue) { throw '请先正常退出蛇魔Z / Exit OROCHI_Z_TC normally before installing.' }
+$files = @('dinput8.dll', 'OrochiZPadX.ini')
 foreach ($name in $files) {
     $source = if ($name -eq 'OrochiZPadX.ini') { Join-Path $PSScriptRoot $name } else { Join-Path $PSScriptRoot "build\$name" }
-    if (-not (Test-Path -LiteralPath $source)) { throw "Missing build file: $source" }
+    if (-not (Test-Path -LiteralPath $source)) { throw "缺少补丁文件 / Missing patch file: $source" }
 }
 $backup = Join-Path $target ('MUSOUTweaksPC-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
 New-Item -ItemType Directory -Path $backup | Out-Null
@@ -31,6 +33,6 @@ try {
     }
     throw
 }
-Write-Output "Installed in: $target"
-Write-Output "Backup: $backup"
-Write-Output 'Launch the game normally. Existing 1.2 controller bindings are compatible.'
+Write-Output "已安装 / Installed in: $target"
+Write-Output "备份 / Backup: $backup"
+Write-Output '请正常启动游戏。旧版 1.2 手柄绑定仍兼容。 / Launch the game normally. Existing 1.2 controller bindings remain compatible.'

@@ -1,14 +1,16 @@
+# 真三6DX专用安装脚本。繁中版会同时安装随包提供的面部表情 MOD。
+# SSM6 DX installer. The Traditional-Chinese build also installs the bundled facial-expression mod.
 param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\Dynasty Warriors 7 DX')
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $target = (Resolve-Path -LiteralPath $GameDir).Path
 $executables = @('SM6TC.exe','SM6EN.exe','SM6JP.exe')
 if (-not ($executables | Where-Object { Test-Path -LiteralPath (Join-Path $target $_) })) {
-    throw 'No supported SSM6 DX executable (SM6TC.exe, SM6EN.exe, or SM6JP.exe) was found.'
+    throw '找不到支持的 SSM6 DX 可执行文件 / No supported SSM6 DX executable (SM6TC.exe, SM6EN.exe, or SM6JP.exe) was found.'
 }
 $hasTraditionalChinese = Test-Path -LiteralPath (Join-Path $target 'SM6TC.exe')
 $running = Get-Process -Name @('SM6TC','SM6EN','SM6JP') -ErrorAction SilentlyContinue
-if ($running) { throw "Exit the SSM6 DX game before installing: $($running.ProcessName -join ', ')" }
+if ($running) { throw "请先退出真三6DX / Exit the SSM6 DX game before installing: $($running.ProcessName -join ', ')" }
 $installFiles = @(
     [pscustomobject]@{ source='build\dinput8.dll'; name='dinput8.dll' }
 )
@@ -64,8 +66,8 @@ try {
     }
     throw
 }
-Write-Output "Installed in: $target"
-Write-Output "Backup: $backup"
-Write-Output 'Launch the game normally. The patch supports XInput, native DS4, D-pad mapping, hot-plug, and borderless desktop-resolution rendering.'
-if ($hasTraditionalChinese) { Write-Output 'Installed the supplied SM6TC facial-expression fix through the D3DX9 mod loader. The bundled resolution mod is intentionally not installed: it forces the engine render size to the desktop while the game keeps its own logical resolution, which shows up as a wrong field of view until the resolution is applied again in game.' }
-else { Write-Output 'SM6TC supplemental mods were skipped because SM6TC.exe is not present.' }
+Write-Output "已安装 / Installed in: $target"
+Write-Output "备份 / Backup: $backup"
+Write-Output '请正常启动游戏。补丁支持 XInput、原生 DS4、十字键、热插拔和无边框桌面分辨率渲染。 / Launch the game normally. The patch supports XInput, native DS4, D-pad mapping, hot-plug, and borderless desktop-resolution rendering.'
+if ($hasTraditionalChinese) { Write-Output '已通过 D3DX9 MOD 加载器安装真三6DX繁中版面部表情修复。未安装分辨率 MOD，因为它会让引擎渲染尺寸与逻辑分辨率不一致。 / Installed the supplied SM6TC facial-expression fix. The resolution mod is intentionally omitted because it mismatches the engine render and logical resolutions.' }
+else { Write-Output '未发现 SM6TC.exe，跳过繁中版第三方 MOD。 / SM6TC.exe is absent, so the Traditional-Chinese supplemental mods were skipped.' }

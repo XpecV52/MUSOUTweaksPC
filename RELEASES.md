@@ -14,8 +14,12 @@
 | `v1.0.2` | `MUSOUTweaksPC_V1.0.2.zip` | 1245363 | `191254f769cac0ea19447271935d4e11d0e217679e6f7ffb8864d49c3963de97` |
 | `v1.0.3` | `MUSOUTweaksPC_V1.0.3.zip` | 1258553 | `cac436801010919ebdd6b92f3575a7d973c69a197379799788ff7944ca76cda9` |
 | `v1.0.4` | `MUSOUTweaksPC_V1.0.4.zip` | 1293098 | `32e8de2a08b3bef81d077932af9ccbd3a88c47d72560e5427f7194c9caf2a4ac` |
+| `v1.0.5` | `MUSOUTweaksPC_V1.0.5.zip` | 1476713 | `30c492c71825bb160afabd408365be48287d6646f56fcbe2a633e8fdd9e6d3a8` |
 
-`v1.0.1` 对应内部构建 **2.45**、`v1.0.2` 对应 **2.46**、`v1.0.3` 对应 **2.47**、`v1.0.4` 对应 **2.52**（dll 日志横幅里打印的是构建号，例如 `MUSOUTweaksPC 2.52`，不是发布号）。
+`v1.0.1` 对应内部构建 **2.45**、`v1.0.2` 对应 **2.46**、`v1.0.3` 对应 **2.47**、`v1.0.4` 对应 **2.52**、`v1.0.5` 对应内部构建 **2.53**（DLL 日志横幅里打印的是构建号，不是发布号）。
+
+`v1.0.5` 包含双人菜单接管整理、controller_takeover 关闭时的原生输入回退、Xbox/DS4/DualSense 震动桥接、真三5短按跳格修复、无边框焦点修复、真三6DX镜头快捷键，以及中英文配置和部署文档整理。
+`v1.0.5` includes co-op menu ownership cleanup, native-input fallback when controller takeover is disabled, Xbox/DS4/DualSense force-feedback bridging, the SM5 short-press skip fix, borderless focus recovery, SSM6 DX camera shortcuts, and bilingual configuration and deployment docs.
 
 `v1.0.4` 内容（内部构建 **2.52**）：
 
@@ -48,8 +52,8 @@
 发布流程：
 
 ```powershell
-python release.py                  # 生成 _rel\MUSOUTweaksPC_V1.0.3.zip + 七个子包 + NOTES_V1.0.3.md
-python publish.py V1.0.3 --notes _rel\NOTES_V1.0.3.md
+python release.py                  # 生成 _rel\MUSOUTweaksPC_V1.0.5.zip + 七个子包 + NOTES_V1.0.5.md
+python publish.py V1.0.5 --notes _rel\NOTES_V1.0.5.md
 ```
 
 `publish.py` 走 `api.github.com`（本机 `gh` 不可用），token 取自 git 凭据助手；同名 asset 会先删再传，所以可以反复跑。

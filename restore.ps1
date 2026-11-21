@@ -1,8 +1,10 @@
+# 从安装脚本生成的 manifest 备份恢复文件。
+# Restore files from a manifest backup created by one of the installers.
 param([Parameter(Mandatory=$true)][string]$BackupDir)
 $ErrorActionPreference = 'Stop'
 $patchedGames = @('OROCHI_Z_TC','ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch','SW2','SM6TC','SM6EN','SM6JP','SM5_WIN')
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in $patchedGames }
-if ($running) { throw "Exit patched games before restoring: $($running.ProcessName -join ', ')" }
+if ($running) { throw "请先退出正在运行的游戏 / Exit patched games before restoring: $($running.ProcessName -join ', ')" }
 $backup = (Resolve-Path -LiteralPath $BackupDir).Path
 $target = Split-Path -Parent $backup
 $manifestPath = Join-Path $backup 'manifest.json'
@@ -27,4 +29,4 @@ foreach ($entry in $entries) {
     }
     elseif (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination }
 }
-Write-Output "Restored from: $backup"
+Write-Output "已恢复 / Restored from: $backup"

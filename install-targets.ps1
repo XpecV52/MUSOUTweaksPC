@@ -1,3 +1,5 @@
+# 批量安装当前构建到本机已配置的游戏目录，并为每个目标创建时间戳备份。
+# Install the current build into the configured game folders and create a timestamped backup for each target.
 param(
     [string]$Shin3 = 'E:\Games\Non-Steam\Shin Sangokumusou 3\game',
     [string]$Shin4 = 'E:\Games\Non-Steam\Shin Sangokumusou 4',
@@ -9,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $patchedGames = @('ShinSangokumusou3','SM4_WIN','SS4','SS4_Plus','SS4_Super','SS4_Ultima','Launch','SW2','SM5_WIN')
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in $patchedGames }
-if ($running) { throw "Exit patched games before installing: $($running.ProcessName -join ', ')" }
+if ($running) { throw "请先退出正在运行的游戏 / Exit patched games before installing: $($running.ProcessName -join ', ')" }
 $targets = @(
     @{ dir = $Shin3; dll = 'build\dinput8.dll'; ini = 'SSM3_Tweaks.ini' },
     @{ dir = $Shin4; dll = 'build\dinput8.dll'; ini = 'SSM4_Tweaks.ini' },
@@ -43,6 +45,6 @@ foreach ($item in $targets) {
         $legacyConfig = Join-Path $target 'SSM2_Tweaks.ini'
         if (Test-Path -LiteralPath $legacyConfig) { Remove-Item -LiteralPath $legacyConfig }
     }
-    Write-Output "Installed: $target"
-    Write-Output "Backup: $backup"
+    Write-Output "已安装 / Installed: $target"
+    Write-Output "备份 / Backup: $backup"
 }
